@@ -1,0 +1,46 @@
+repos:
+
+# Prevent commits directly to main
+- repo: https://github.com/pre-commit/pre-commit-hooks
+  rev: v6.0.0
+  hooks:
+    - id: no-commit-to-branch
+      args: [--branch, main]
+
+# Make sure uv.lock file is up to date 
+- repo: https://github.com/astral-sh/uv-pre-commit
+  # uv version.
+  rev: 0.11.7
+  hooks:
+    # Update the uv lockfile
+    - id: uv-lock
+
+# Ruff Hooks (Format & Check)
+- repo: https://github.com/astral-sh/ruff-pre-commit
+  # Ruff version.
+  rev: v0.15.10
+  hooks:
+    # Run the linter.
+    - id: ruff-check
+      types_or: [ python, pyi ]
+      args: [ --fix ]
+    # Run the formatter.
+    - id: ruff-format
+      types_or: [ python, pyi ]
+
+# Local hooks for ty and pytest (using your uv environment)
+- repo: local
+  hooks:
+    - id: ty
+      name: ty
+      entry: uv run ty check
+      language: system
+      types: [python]
+      pass_filenames: false
+    - id: pytest
+      name: pytest
+      entry: uv run pytest
+      language: system
+      types: [python]
+      pass_filenames: false
+      stages: [manual]

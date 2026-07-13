@@ -1,0 +1,321 @@
+"""Top-level CLI for autoharness."""
+
+from __future__ import annotations
+
+import argparse
+import sys
+from pathlib import Path
+from typing import Any
+
+from src.autoharness.harness_as_policy.config import Settings
+from src.autoharness.harness_as_policy.evaluation import (
+    evaluate_policy,
+    format_evaluation_summary,
+)
+from src.autoharness.harness_as_policy.refiner import Refiner
+from src.autoharness.harness_as_policy.search import synthesize
+from src.autoharness.harness_as_policy.tower_of_hanoi import (
+    TowerOfHanoiAdapter,
+)
+
+
+def _build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        description="AutoHarness — policy synthesis and evaluation",
+    )
+    subparsers = parser.add_subparsers(dest="command", required=True)
+
+    syn = subparsers.add_parser("synthesize", help="Synthesize a policy")
+    syn.add_argument(
+        "--env",
+        default=None,
+        help="Environment ID (e.g. TowerOfHanoi-v0)",
+    )
+    syn.add_argument(
+        "--profile",
+        default=None,
+        choices=["smoke", "low-cost"],
+        help="Synthesis profile (default: smoke)",
+    )
+    syn.add_argument(
+        "--model",
+        default=None,
+        help="Model identifier (e.g. google_genai:gemini-2.5-flash)",
+    )
+    syn.add_argument(
+        "--refinements",
+        type=int,
+        default=None,
+        help="Override refinement budget",
+    )
+    syn.add_argument(
+        "--artifact-root",
+        default=None,
+        help="Artifact output directory",
+    )
+    syn.add_argument(
+        "--seed",
+        type=int,
+        default=None,
+        help="Thompson RNG seed",
+    )
+
+    ev = subparsers.add_parser(
+        "evaluate",
+        help="Evaluate a synthesized policy",
+    )
+    ev.add_argument(
+        "--run",
+        required=True,
+        type=Path,
+        help="Run artifact directory",
+    )
+
+    evb = subparsers.add_parser(
+        "evaluate-baseline",
+        help="Evaluate a live LLM baseline",
+    )
+    evb.add_argument(
+        "--run",
+        required=True,
+        type=Path,
+        help="Run artifact directory",
+    )
+    evb.add_argument("--model", required=True, help="Model identifier")
+
+    return parser
+
+
+def synthesize_cmd(
+    args: argparse.Namespace | None = None,
+) -> dict[str, Any] | None:
+    """Run the synthesize command."""
+    parser = _build_parser()
+    if args is None:
+        args, _ = parser.parse_known_args()
+
+    settings_kwargs: dict[str, Any] = {}
+    if args.env:
+        settings_kwargs["env_id"] = args.env
+    if args.profile:
+        settings_kwargs["profile"] = args.profile
+    if args.model:
+        settings_kwargs["model"] = args.model
+    if args.refinements is not None:
+        settings_kwargs["refinements"] = args.refinements
+    if args.artifact_root:
+        settings_kwargs["artifact_root"] = args.artifact_root
+    if args.seed is not None:
+        settings_kwargs["thompson_seed"] = args.seed
+
+    settings = Settings(**settings_kwargs)
+
+    adapter = TowerOfHanoiAdapter(difficulty="v0")
+
+    refiner = Refiner(model_id=settings.model)
+
+    result = synthesize(
+        adapter=adapter,
+        profile=settings.profile,
+        refiner=refiner,
+        artifact_root=Path(settings.artifact_root),
+        seed=settings.thompson_seed,
+        refinements=settings.effective_refinements,
+    )
+    print(f"Run ID: {result.get('run_id', 'unknown')}")
+    print(f"Stop reason: {result.get('stop_reason', 'unknown')}")
+    print(f"Best candidate: {result.get('best_candidate_id', 'none')}")
+    print(f"Total candidates: {result.get('total_candidates', 0)}")
+    print(f"Model calls: {result.get('model_call_count', 0)}")
+    return result
+
+
+def evaluate_cmd(run_dir: Path) -> list[Any] | None:
+    """Run the evaluate command."""
+    best_policy_path = run_dir / "best.py"
+    if not best_policy_path.exists():
+        print(f"Error: no best.py found in {run_dir}", file=sys.stderr)
+        return None
+    source = best_policy_path.read_text()
+    results = evaluate_policy(source=source)
+    summary = format_evaluation_summary(results)
+    print(summary)
+    return results
+
+
+def evaluate_baseline_cmd(
+    run_dir: Path,
+    model_id: str,
+) -> list[Any] | None:
+    """Run the live-LLM baseline evaluate command."""
+    import time
+
+    from src.autoharness.harness_as_policy.evaluation import (
+        DIFFICULTIES,
+        EvaluationResult,
+    )
+
+    results: list[EvaluationResult] = []
+    model_call_count = 0
+    input_tokens = 0
+    output_tokens = 0
+
+    for diff_key, env_id, _max_steps, optimal in DIFFICULTIES:
+        adapter = TowerOfHanoiAdapter(difficulty=diff_key)
+        refiner = Refiner(model_id=model_id)
+        try:
+            adapter.create()
+            adapter.reset()
+        except Exception:
+            results.append(
+                EvaluationResult(
+                    env_id=env_id,
+                    solved=False,
+                    reward=0.0,
+                    legal_action_count=0,
+                    steps_used=0,
+                    optimal_steps=optimal,
+                    illegal_action_reason=None,
+                    latency=0.0,
+                    execution_failure=True,
+                )
+            )
+            continue
+        start = time.monotonic()
+        legal_actions = 0
+        solved = False
+        reward = 0.0
+        steps_used = 0
+        illegal_reason: str | None = None
+        (adapter._observation if hasattr(adapter, "_observation") else "")
+        for _ in range(adapter.max_steps):
+            steps_used += 1
+            try:
+                response = refiner.refine(
+                    env_name=adapter.env_id,
+                    rules=adapter.rules,
+                    action_format=adapter.action_format,
+                    parent_source="",
+                    parent_heuristic=0.0,
+                    parent_reward=0.0,
+                    parent_legal_actions=0,
+                    parent_status="unknown",
+                    feedback=["Live policy mode"],
+                )
+                model_call_count += 1
+                action = response.source if response.success and response.source else ""
+            except Exception:
+                action = ""
+            if not action:
+                results.append(
+                    EvaluationResult(
+                        env_id=env_id,
+                        solved=False,
+                        reward=0.0,
+                        legal_action_count=legal_actions,
+                        steps_used=steps_used,
+                        optimal_steps=optimal,
+                        illegal_action_reason="model_error",
+                        latency=time.monotonic() - start,
+                        execution_failure=True,
+                    )
+                )
+                break
+            step_result = adapter.step(action)
+            if not step_result.is_legal:
+                illegal_reason = step_result.feedback or "Illegal"
+                results.append(
+                    EvaluationResult(
+                        env_id=env_id,
+                        solved=False,
+                        reward=0.0,
+                        legal_action_count=legal_actions,
+                        steps_used=steps_used,
+                        optimal_steps=optimal,
+                        illegal_action_reason=illegal_reason,
+                        latency=time.monotonic() - start,
+                        execution_failure=False,
+                    )
+                )
+                break
+            legal_actions += 1
+            if step_result.terminated:
+                solved = step_result.reward >= 1.0
+                reward = step_result.reward
+                results.append(
+                    EvaluationResult(
+                        env_id=env_id,
+                        solved=solved,
+                        reward=reward,
+                        legal_action_count=legal_actions,
+                        steps_used=steps_used,
+                        optimal_steps=optimal,
+                        illegal_action_reason=None,
+                        latency=time.monotonic() - start,
+                        execution_failure=False,
+                    )
+                )
+                break
+        else:
+            results.append(
+                EvaluationResult(
+                    env_id=env_id,
+                    solved=False,
+                    reward=0.0,
+                    legal_action_count=legal_actions,
+                    steps_used=steps_used,
+                    optimal_steps=optimal,
+                    illegal_action_reason="step_limit",
+                    latency=time.monotonic() - start,
+                    execution_failure=False,
+                )
+            )
+
+    summary = format_evaluation_summary(results)
+    summary += f"\n  Model calls: {model_call_count}\n"
+    print(summary)
+
+    from src.autoharness.harness_as_policy.artifacts import ArtifactStore
+
+    store = ArtifactStore(root=run_dir.parent, run_id=run_dir.name)
+    store.write_evaluation(
+        "llm-baseline",
+        {
+            "results": [
+                {
+                    "env_id": r.env_id,
+                    "solved": r.solved,
+                    "reward": r.reward,
+                    "legal_action_count": r.legal_action_count,
+                    "steps_used": r.steps_used,
+                    "optimal_steps": r.optimal_steps,
+                    "illegal_action_reason": r.illegal_action_reason,
+                    "latency": r.latency,
+                    "execution_failure": r.execution_failure,
+                }
+                for r in results
+            ],
+            "model_call_count": model_call_count,
+            "input_tokens": input_tokens,
+            "output_tokens": output_tokens,
+        },
+    )
+    return results
+
+
+def main(args: list[str] | None = None) -> int:
+    """Main entry point."""
+    parser = _build_parser()
+    parsed = parser.parse_args(args)
+
+    if parsed.command == "synthesize":
+        synthesize_cmd(parsed)
+    elif parsed.command == "evaluate":
+        evaluate_cmd(parsed.run)
+    elif parsed.command == "evaluate-baseline":
+        evaluate_baseline_cmd(parsed.run, parsed.model)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

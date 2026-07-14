@@ -75,6 +75,15 @@ DANGEROUS_BUILTINS: set[str] = {
     "locals",
 }
 
+DANGEROUS_ATTRIBUTES: set[str] = {
+    "__globals__",
+    "__closure__",
+    "__code__",
+    "__class__",
+    "__dict__",
+    "__builtins__",
+}
+
 MAX_OUTPUT_BYTES: int = 65536
 MAX_STDERR_BYTES: int = 65536
 
@@ -174,6 +183,10 @@ class PolicyExecutor:
         if not has_propose_action:
             return "Module must define propose_action(observation: str) -> str"
         for node in ast.walk(tree):
+            if isinstance(node, ast.Attribute) and node.attr in DANGEROUS_ATTRIBUTES:
+                return f"Disallowed attribute access: {node.attr}"
+            if isinstance(node, ast.Name) and node.id == "__import__":
+                return "Disallowed reference: __import__"
             if isinstance(node, ast.Import):
                 for alias in node.names:
                     top = alias.name.split(".")[0]
@@ -188,12 +201,8 @@ class PolicyExecutor:
                 func = node.func
                 if isinstance(func, ast.Name) and func.id in DANGEROUS_BUILTINS:
                     return f"Disallowed builtin call: {func.id}"
-                if isinstance(func, ast.Attribute) and func.attr in (
-                    "__import__",
-                    "__subclasshook__",
-                    "__subclasses__",
-                ):
-                    return f"Disallowed attribute access: {func.attr}"
+                if isinstance(func, ast.Attribute) and func.attr == "__import__":
+                    return "Disallowed attribute access: __import__"
         return None
 
     def _make_script(self, source: str, observation: str) -> str:
@@ -227,12 +236,12 @@ class PolicyExecutor:
 
         class _ModuleProxy:
             def __init__(self, _m):
-                object.__setattr__(self, "_m", _m)
-            def __getattr__(self, _n):
+                object.__setattr__(self, "_inner", _m)
+            def __getattribute__(self, _n):
                 if _n.startswith("_"):
                     msg = "Access to private attribute '{{}}' is not allowed".format(_n)
                     raise AttributeError(msg)
-                return getattr(self._m, _n)
+                return getattr(object.__getattribute__(self, "_inner"), _n)
 
         _orig_import = builtins.__import__
 

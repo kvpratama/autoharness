@@ -83,6 +83,45 @@ def test_disallowed_import() -> None:
     assert result.failure_type == "contract_failure"
 
 
+def test_blocks_introspection_via_proxy_m() -> None:
+    """Accessing _m on a proxied module is blocked at runtime."""
+    source = textwrap.dedent("""\
+    import random
+    def propose_action(observation: str) -> str:
+        return random._m._os.getcwd()
+    """)
+    executor = PolicyExecutor(timeout=5, max_source_size=65536)
+    result = executor.execute(source, observation="test")
+    assert not result.success
+    assert result.failure_type == "execution_failure"
+
+
+def test_blocks_introspection_via_func_globals() -> None:
+    """Accessing __globals__ on a module function is blocked at AST level."""
+    source = textwrap.dedent("""\
+    import random
+    def propose_action(observation: str) -> str:
+        return random.randint.__globals__["os"].getcwd()
+    """)
+    executor = PolicyExecutor(timeout=5, max_source_size=65536)
+    result = executor.execute(source, observation="test")
+    assert not result.success
+    assert result.failure_type == "contract_failure"
+
+
+def test_blocks_introspection_via_safe_import_globals() -> None:
+    """Accessing __import__ or __globals__ is blocked at AST level."""
+    source = textwrap.dedent("""\
+    imp = __import__
+    def propose_action(observation: str) -> str:
+        return imp.__globals__["os"].getcwd()
+    """)
+    executor = PolicyExecutor(timeout=5, max_source_size=65536)
+    result = executor.execute(source, observation="test")
+    assert not result.success
+    assert result.failure_type == "contract_failure"
+
+
 def test_source_too_large() -> None:
     """Source exceeding max_size returns contract failure."""
     executor = PolicyExecutor(timeout=5, max_source_size=10)

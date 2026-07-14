@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import random
 import uuid
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -106,7 +107,8 @@ def synthesize(
     model_id: str = "",
 ) -> dict[str, Any]:
     """Run the full synthesis workflow. Returns summary dict."""
-    run_id = uuid.uuid4().hex[:12]
+    now = datetime.now()
+    run_id = now.strftime("%Y-%m-%d-%H%M%S") + "-" + uuid.uuid4().hex[:8]
     store = ArtifactStore(root=artifact_root, run_id=run_id)
     rng = random.Random(seed)
     max_refinements = refinements if refinements is not None else profile.refinements

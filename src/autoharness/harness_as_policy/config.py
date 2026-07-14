@@ -24,6 +24,7 @@ class Settings(BaseSettings):
     thompson_seed: int = 42
     execution_timeout: int = 10
     max_source_size: int = 32768
+    log_level: str = "WARNING"
     input_price_per_million: float | None = None
     output_price_per_million: float | None = None
 

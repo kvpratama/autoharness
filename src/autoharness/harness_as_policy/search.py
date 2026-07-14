@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import random
 import uuid
 from pathlib import Path
@@ -18,6 +19,8 @@ from autoharness.harness_as_policy.models import (
     TerminationReason,
 )
 from autoharness.harness_as_policy.rollout import RolloutEvaluator
+
+logger = logging.getLogger(__name__)
 
 
 def beta_parameters(
@@ -135,6 +138,15 @@ def synthesize(
         }
     )
 
+    logger.info(
+        "Starting synthesis run_id=%s profile=%s max_refinements=%s env=%s model=%s",
+        run_id,
+        profile.value,
+        max_refinements,
+        adapter.env_id,
+        model_id,
+    )
+
     root = Candidate(
         id="000",
         parent_id=None,
@@ -171,12 +183,26 @@ def synthesize(
             else:
                 stop_reason = "no evaluated candidates to select"
                 break
+
+        logger.info(
+            "Iteration %d/%d — selecting from %d candidate(s)",
+            iteration,
+            max_refinements,
+            len(pool),
+        )
         parent_id = select_candidate(pool, rng)
         if parent_id is None:
             stop_reason = "no candidates to select"
             break
 
         parent = candidates[parent_id]
+        logger.info(
+            "Selected parent %s (H=%.3f, reward=%.3f, expansions=%d)",
+            parent_id,
+            parent.heuristic,
+            parent.terminal_reward,
+            parent.expansion_count,
+        )
         parent.expansion_count += 1
 
         store.write_event(
@@ -229,6 +255,11 @@ def synthesize(
             )
         )
 
+        logger.info(
+            "Refinement %s — candidate %s",
+            "succeeded" if refine_result.success else "failed",
+            child_id,
+        )
         if not refine_result.success or not refine_result.source:
             child = Candidate(
                 id=child_id,
@@ -260,6 +291,14 @@ def synthesize(
 
         store.write_candidate(child_id, refine_result.source)
         rollout_result = evaluator.evaluate(source=refine_result.source)
+
+        logger.info(
+            "Evaluation: candidate %s H=%.3f reward=%.3f (%s)",
+            child_id,
+            rollout_result.heuristic,
+            rollout_result.terminal_reward,
+            rollout_result.termination_reason.value if rollout_result.termination_reason else "?",
+        )
 
         child = Candidate(
             id=child_id,
@@ -298,6 +337,10 @@ def synthesize(
         current_best = find_best_candidate(_evaluated_candidates())
         if current_best:
             best_id = current_best
+
+    logger.info("Stop reason: %s", stop_reason)
+    if best_id:
+        logger.info("Best candidate: %s (H=%.3f)", best_id, candidates[best_id].heuristic)
 
     if not stop_reason:
         stop_reason = should_stop(candidates, max_refinements, max_refinements) or "completed"

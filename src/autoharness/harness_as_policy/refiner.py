@@ -6,6 +6,16 @@ from dataclasses import dataclass
 
 from langchain.chat_models import init_chat_model
 from langchain_core.language_models import BaseChatModel
+from langfuse.langchain import CallbackHandler
+
+_langfuse_handler: CallbackHandler | None = None
+
+
+def _get_langfuse_handler() -> CallbackHandler:
+    global _langfuse_handler
+    if _langfuse_handler is None:
+        _langfuse_handler = CallbackHandler()
+    return _langfuse_handler
 
 
 @dataclass
@@ -156,7 +166,9 @@ class Refiner:
         last_error: str | None = None
         for _ in range(2):
             try:
-                response = self._model.invoke(prompt)
+                response = self._model.invoke(
+                    prompt, config={"callbacks": [_get_langfuse_handler()]}
+                )
                 self._model_call_count += 1
             except Exception as e:
                 self._model_call_count += 1

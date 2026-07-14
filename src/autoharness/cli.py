@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import argparse
+import logging
+import os
 import sys
 from pathlib import Path
 from typing import Any
@@ -24,12 +26,25 @@ from autoharness.harness_as_policy.tower_of_hanoi import (
 
 
 def _build_parser() -> argparse.ArgumentParser:
+    _shared = argparse.ArgumentParser(add_help=False)
+    _shared.add_argument(
+        "--verbose",
+        action="store_true",
+        help="Enable INFO-level logging",
+    )
+    _shared.add_argument(
+        "--log-level",
+        default=None,
+        choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
+        help="Set logging level (overrides --verbose)",
+    )
+
     parser = argparse.ArgumentParser(
         description="AutoHarness — policy synthesis and evaluation",
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
 
-    syn = subparsers.add_parser("synthesize", help="Synthesize a policy")
+    syn = subparsers.add_parser("synthesize", parents=[_shared], help="Synthesize a policy")
     syn.add_argument(
         "--env",
         default=None,
@@ -78,6 +93,7 @@ def _build_parser() -> argparse.ArgumentParser:
 
     ev = subparsers.add_parser(
         "evaluate",
+        parents=[_shared],
         help="Evaluate a synthesized policy",
     )
     ev.add_argument(
@@ -89,6 +105,7 @@ def _build_parser() -> argparse.ArgumentParser:
 
     evb = subparsers.add_parser(
         "evaluate-baseline",
+        parents=[_shared],
         help="Evaluate a live LLM baseline",
     )
     evb.add_argument(
@@ -382,6 +399,21 @@ def main(args: list[str] | None = None) -> int:
     load_dotenv()
     parser = _build_parser()
     parsed = parser.parse_args(args)
+
+    if parsed.log_level:
+        level = parsed.log_level
+    elif parsed.verbose:
+        level = "INFO"
+    else:
+        level = os.environ.get("AUTOHARNESS_LOG_LEVEL")
+
+    if level:
+        logging.basicConfig(
+            level=getattr(logging, level.upper()),
+            format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+            stream=sys.stderr,
+            force=True,
+        )
 
     if parsed.command == "synthesize":
         synthesize_cmd(parsed)

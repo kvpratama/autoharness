@@ -176,3 +176,118 @@ def test_refiner_double_retry_failure() -> None:
         feedback=[""],
     )
     assert not result.success
+
+
+def test_refiner_extracts_source_from_content_blocks() -> None:
+    """Refiner extracts source from thinking+text content blocks (Gemma 4 style).
+
+    The thinking block contains a code fence (common for model reasoning),
+    which should NOT confuse source extraction.
+    """
+
+    class ContentBlockModel(BaseChatModel):
+        def _generate(self, *args, **kwargs):
+            msg = AIMessage(
+                content=[
+                    {
+                        "type": "thinking",
+                        "thinking": (
+                            "Let me reason step by step...\n"
+                            "```python\n"
+                            "# Pseudo-code for algorithm\n"
+                            "if solved:\n"
+                            "    return '[A C]'\n"
+                            "```\n"
+                            "Now implementing..."
+                        ),
+                    },
+                    {
+                        "type": "text",
+                        "text": (
+                            "```python\n"
+                            "def propose_action(observation: str) -> str:\n"
+                            "    return '[A C]'\n"
+                            "```"
+                        ),
+                    },
+                ]
+            )
+            return ChatResult(generations=[ChatGeneration(message=msg)])
+
+        @property
+        def _llm_type(self) -> str:
+            return "content_block_fake"
+
+    model = ContentBlockModel()
+    refiner = Refiner(model=model)
+    result = refiner.refine(
+        rules="Rules",
+        action_format="[A C]",
+        parent_source="old",
+        parent_heuristic=0.0,
+        parent_reward=0.0,
+        parent_legal_actions=0,
+        parent_status="contract_failure",
+        feedback=[""],
+    )
+    assert result.success
+    assert result.source is not None
+    assert "propose_action" in result.source
+
+
+def test_refiner_content_blocks_no_text_block() -> None:
+    """Refiner returns failure when content blocks contain only thinking."""
+
+    class ThinkingOnlyModel(BaseChatModel):
+        def _generate(self, *args, **kwargs):
+            msg = AIMessage(
+                content=[
+                    {"type": "thinking", "thinking": "I should think about this more..."},
+                ]
+            )
+            return ChatResult(generations=[ChatGeneration(message=msg)])
+
+        @property
+        def _llm_type(self) -> str:
+            return "thinking_only_fake"
+
+    model = ThinkingOnlyModel()
+    refiner = Refiner(model=model)
+    result = refiner.refine(
+        rules="Rules",
+        action_format="[A C]",
+        parent_source="old",
+        parent_heuristic=0.0,
+        parent_reward=0.0,
+        parent_legal_actions=0,
+        parent_status="contract_failure",
+        feedback=[""],
+    )
+    assert not result.success
+
+
+def test_refiner_content_blocks_empty_list() -> None:
+    """Refiner handles empty content block list gracefully."""
+
+    class EmptyBlocksModel(BaseChatModel):
+        def _generate(self, *args, **kwargs):
+            msg = AIMessage(content=[])
+            return ChatResult(generations=[ChatGeneration(message=msg)])
+
+        @property
+        def _llm_type(self) -> str:
+            return "empty_blocks_fake"
+
+    model = EmptyBlocksModel()
+    refiner = Refiner(model=model)
+    result = refiner.refine(
+        rules="Rules",
+        action_format="[A C]",
+        parent_source="old",
+        parent_heuristic=0.0,
+        parent_reward=0.0,
+        parent_legal_actions=0,
+        parent_status="contract_failure",
+        feedback=[""],
+    )
+    assert not result.success

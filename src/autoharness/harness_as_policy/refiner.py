@@ -116,6 +116,29 @@ def _extract_source(response: str) -> str | None:
     return None
 
 
+def _normalize_content(response) -> str:
+    """Extract plain text from a model response, handling content blocks.
+
+    Models like Gemma 4 return content as a list of blocks
+    (e.g. ``{"type": "thinking", …}``, ``{"type": "text", …}``).
+    Only the ``"text"`` blocks are concatenated; reasoning blocks are
+    discarded so they don't interfere with source extraction.
+    """
+    raw = response.content if hasattr(response, "content") else str(response)
+    if isinstance(raw, str):
+        return raw
+    if isinstance(raw, list):
+        parts: list[str] = []
+        for block in raw:
+            if isinstance(block, dict) and block.get("type") == "text":
+                text = block.get("text", "")
+                if isinstance(text, str):
+                    parts.append(text)
+        if parts:
+            return "\n".join(parts)
+    return str(raw)
+
+
 class Refiner:
     """Synthesizes candidate policy modules using a chat model."""
 
@@ -174,8 +197,7 @@ class Refiner:
                 self._model_call_count += 1
                 last_error = str(e)
                 continue
-            raw = response.content if hasattr(response, "content") else str(response)
-            content = raw if isinstance(raw, str) else str(raw)
+            content = _normalize_content(response)
             source = _extract_source(content)
             if source and "propose_action" in source:
                 return RefinerResult(success=True, source=source)

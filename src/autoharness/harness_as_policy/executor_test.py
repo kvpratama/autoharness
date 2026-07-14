@@ -91,6 +91,19 @@ def test_source_too_large() -> None:
     assert result.failure_type == "contract_failure"
 
 
+def test_safe_import_works_at_runtime() -> None:
+    """A policy using a SAFE_IMPORTS module executes without error."""
+    source = textwrap.dedent("""\
+    import math
+    def propose_action(observation: str) -> str:
+        return str(math.pi)[:5]
+    """)
+    executor = PolicyExecutor(timeout=5, max_source_size=65536)
+    result = executor.execute(source, observation="test")
+    assert result.success
+    assert result.output == "3.141"
+
+
 def test_runtime_exception() -> None:
     """Runtime exception in propose_action returns execution failure."""
     source = textwrap.dedent("""\
@@ -139,6 +152,19 @@ def test_execution_result_attributes() -> None:
     assert isinstance(result.output, str)
     assert isinstance(result.latency, float)
     assert result.latency >= 0
+
+
+def test_output_exceeds_limit() -> None:
+    """Policy that produces output exceeding MAX_OUTPUT_BYTES fails."""
+    source = textwrap.dedent("""\
+    def propose_action(observation: str) -> str:
+        return "X" * 200000
+    """)
+    executor = PolicyExecutor(timeout=5, max_source_size=65536)
+    result = executor.execute(source, observation="test")
+    assert not result.success
+    assert result.failure_type == "execution_failure"
+    assert "Output exceeds" in (result.error_details or "")
 
 
 def test_execution_result_failure_attributes() -> None:

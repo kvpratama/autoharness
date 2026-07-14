@@ -61,6 +61,18 @@ def _build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Thompson RNG seed",
     )
+    syn.add_argument(
+        "--execution-timeout",
+        type=int,
+        default=None,
+        help="Per-action execution timeout in seconds",
+    )
+    syn.add_argument(
+        "--max-source-size",
+        type=int,
+        default=None,
+        help="Maximum policy source size in bytes",
+    )
 
     ev = subparsers.add_parser(
         "evaluate",
@@ -84,6 +96,18 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Run artifact directory",
     )
     evb.add_argument("--model", required=True, help="Model identifier")
+    evb.add_argument(
+        "--input-price",
+        type=float,
+        default=None,
+        help="Input price per million tokens (for cost estimation)",
+    )
+    evb.add_argument(
+        "--output-price",
+        type=float,
+        default=None,
+        help="Output price per million tokens (for cost estimation)",
+    )
 
     return parser
 
@@ -112,11 +136,17 @@ def synthesize_cmd(
         settings_kwargs["artifact_root"] = args.artifact_root
     if args.seed is not None:
         settings_kwargs["thompson_seed"] = args.seed
+    if args.execution_timeout is not None:
+        settings_kwargs["execution_timeout"] = args.execution_timeout
+    if args.max_source_size is not None:
+        settings_kwargs["max_source_size"] = args.max_source_size
 
     settings = Settings(**settings_kwargs)
 
-    difficulty = _ENV_TO_DIFFICULTY.get(settings.env_id, "v0")
-    adapter = TowerOfHanoiAdapter(difficulty=difficulty)
+    if settings.env_id not in _ENV_TO_DIFFICULTY:
+        valid = ", ".join(sorted(_ENV_TO_DIFFICULTY))
+        parser.error(f"Unknown environment ID '{settings.env_id}'. Valid options: {valid}")
+    adapter = TowerOfHanoiAdapter(difficulty=_ENV_TO_DIFFICULTY[settings.env_id])
 
     refiner = Refiner(model_id=settings.model)
 
@@ -178,6 +208,8 @@ def evaluate_cmd(run_dir: Path) -> list[Any] | None:
 def evaluate_baseline_cmd(
     run_dir: Path,
     model_id: str,
+    input_price: float | None = None,
+    output_price: float | None = None,
 ) -> list[Any] | None:
     """Run the live-LLM baseline evaluate command."""
     import time
@@ -191,10 +223,15 @@ def evaluate_baseline_cmd(
     total_model_calls = 0
     total_input_tokens = 0
     total_output_tokens = 0
+    total_estimated_cost = 0.0
 
     for diff_key, env_id, _max_steps, optimal in DIFFICULTIES:
         adapter = TowerOfHanoiAdapter(difficulty=diff_key)
-        live_policy = LivePolicy(model_id=model_id)
+        live_policy = LivePolicy(
+            model_id=model_id,
+            input_price_per_million=input_price,
+            output_price_per_million=output_price,
+        )
         try:
             adapter.create()
             adapter.reset()
@@ -231,6 +268,8 @@ def evaluate_baseline_cmd(
             total_model_calls += action_result.model_calls
             total_input_tokens += action_result.input_tokens
             total_output_tokens += action_result.output_tokens
+            if action_result.estimated_cost_usd is not None:
+                total_estimated_cost += action_result.estimated_cost_usd
             if not action_result.success or not action_result.action:
                 results.append(
                     EvaluationResult(
@@ -301,6 +340,8 @@ def evaluate_baseline_cmd(
     summary += f"\n  Model calls: {total_model_calls}\n"
     summary += f"  Input tokens: {total_input_tokens}\n"
     summary += f"  Output tokens: {total_output_tokens}\n"
+    if input_price is not None and output_price is not None:
+        summary += f"  Estimated cost (USD): ${total_estimated_cost:.6f}\n"
     print(summary)
 
     from autoharness.harness_as_policy.artifacts import ArtifactStore
@@ -326,6 +367,7 @@ def evaluate_baseline_cmd(
             "model_call_count": total_model_calls,
             "input_tokens": total_input_tokens,
             "output_tokens": total_output_tokens,
+            "estimated_cost_usd": total_estimated_cost if input_price is not None else None,
         },
     )
     return results
@@ -341,7 +383,7 @@ def main(args: list[str] | None = None) -> int:
     elif parsed.command == "evaluate":
         evaluate_cmd(parsed.run)
     elif parsed.command == "evaluate-baseline":
-        evaluate_baseline_cmd(parsed.run, parsed.model)
+        evaluate_baseline_cmd(parsed.run, parsed.model, parsed.input_price, parsed.output_price)
     return 0
 
 

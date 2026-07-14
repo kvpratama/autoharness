@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import ast
 import os
+import select
 import signal
 import subprocess
 import sys
@@ -11,6 +12,39 @@ import tempfile
 import textwrap
 import time
 from dataclasses import dataclass
+from typing import TYPE_CHECKING, cast
+
+if TYPE_CHECKING:
+    from collections.abc import Iterable
+    from typing import Protocol
+
+    class _Read1able(Protocol):
+        """IO[bytes] with read1 support (BufferedReader/BufferedRandom)."""
+
+        def read1(self, size: int = -1) -> bytes: ...
+        def close(self) -> None: ...
+        @property
+        def closed(self) -> bool: ...
+        def fileno(self) -> int: ...
+        def flush(self) -> None: ...
+        def isatty(self) -> bool: ...
+        def readable(self) -> bool: ...
+        def read(self, n: int = -1) -> bytes: ...
+        def readinto(self, b: bytearray) -> int: ...
+        def readline(self, size: int = -1) -> bytes: ...
+        def readlines(self, hint: int = -1) -> list[bytes]: ...
+        def seek(self, offset: int, whence: int = 0) -> int: ...
+        def seekable(self) -> bool: ...
+        def tell(self) -> int: ...
+        def truncate(self, size: int | None = None) -> int: ...
+        def writable(self) -> bool: ...
+        def write(self, s: bytes) -> int: ...
+        def writelines(self, lines: Iterable[bytes]) -> None: ...
+        def __enter__(self) -> _Read1able: ...
+        def __exit__(self, *args: object) -> None: ...
+        def __iter__(self) -> Iterable[bytes]: ...
+        def __next__(self) -> bytes: ...
+
 
 SAFE_IMPORTS: set[str] = {
     "math",
@@ -166,22 +200,22 @@ class PolicyExecutor:
         cpu = self._cpu_limit
         mem = self._memory_limit_bytes
         return textwrap.dedent(f"""\
-        import builtins, os, resource, signal, sys
+        import builtins, os, resource, sys
 
         resource.setrlimit(resource.RLIMIT_CPU, ({cpu}, {cpu}))
         resource.setrlimit(resource.RLIMIT_AS, ({mem}, {mem}))
         resource.setrlimit(resource.RLIMIT_NPROC, (0, 0))
         resource.setrlimit(resource.RLIMIT_FSIZE, (65536, 65536))
-        os.setsid()
 
+        _disallowed = {{
+            "open", "eval", "exec", "compile",
+            "breakpoint", "input",
+            "getattr", "setattr", "delattr",
+            "vars", "globals", "locals",
+        }}
         _allowed_builtins = {{}}
         for _key, _val in vars(builtins).items():
-            if _key in (
-                "open", "eval", "exec", "compile", "__import__",
-                "breakpoint", "input",
-                "getattr", "setattr", "delattr",
-                "vars", "globals", "locals",
-            ):
+            if _key in _disallowed:
                 continue
             _allowed_builtins[_key] = _val
 
@@ -196,6 +230,73 @@ class PolicyExecutor:
         print(_result, end="")
         """)
 
+    def _read_output(self, proc: subprocess.Popen[bytes]) -> str:
+        """Read stdout/stderr incrementally with output cap. Raises on timeout or overflow."""
+        stdout: _Read1able = cast("_Read1able", proc.stdout)
+        stderr: _Read1able = cast("_Read1able", proc.stderr)
+        read_fds: Iterable[_Read1able] = [stdout, stderr]
+
+        stdout_chunks: list[bytes] = []
+        stderr_chunks: list[bytes] = []
+        total_out = 0
+        deadline = time.monotonic() + self._timeout
+
+        while True:
+            time_left = deadline - time.monotonic()
+            if time_left <= 0:
+                raise subprocess.TimeoutExpired(proc.args, self._timeout)
+
+            rlist, _, _ = select.select(read_fds, [], [], max(0.0, time_left))
+
+            if not rlist:
+                continue
+
+            for fd in rlist:
+                try:
+                    data = fd.read1()
+                except ValueError, OSError:
+                    data = b""
+                if not data:
+                    continue
+                if fd is stdout:
+                    stdout_chunks.append(data)
+                    total_out += len(data)
+                    if total_out > MAX_OUTPUT_BYTES:
+                        raise RuntimeError(f"Output exceeds {MAX_OUTPUT_BYTES} bytes")
+                else:
+                    stderr_chunks.append(data)
+
+            if proc.poll() is not None:
+                for fd, dest in ((stdout, stdout_chunks), (stderr, stderr_chunks)):
+                    try:
+                        while True:
+                            chunk = fd.read1()
+                            if not chunk:
+                                break
+                            dest.append(chunk)
+                            if fd is stdout:
+                                total_out += len(chunk)
+                                if total_out > MAX_OUTPUT_BYTES:
+                                    raise RuntimeError(f"Output exceeds {MAX_OUTPUT_BYTES} bytes")
+                    except ValueError, OSError:
+                        pass
+                break
+
+        proc.wait()
+        stdout_str = (
+            b"".join(stdout_chunks).decode("utf-8", errors="replace") if stdout_chunks else ""
+        )
+
+        if proc.returncode != 0:
+            err_text = (
+                b"".join(stderr_chunks).decode("utf-8", errors="replace").strip()
+                if stderr_chunks
+                else "Unknown error"
+            )
+            raise RuntimeError(f"Subprocess exited with code {proc.returncode}: {err_text}")
+
+        return stdout_str.strip()
+
     def _run_subprocess(self, source: str, observation: str) -> str:
         """Run propose_action in a subprocess with resource limits and process group isolation."""
         script = self._make_script(source, observation)
@@ -205,22 +306,26 @@ class PolicyExecutor:
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 cwd=tmpdir,
+                start_new_session=True,
             )
             try:
-                stdout, stderr = proc.communicate(timeout=self._timeout)
-            except subprocess.TimeoutExpired:
-                try:
-                    os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
-                except ProcessLookupError, PermissionError:
-                    proc.kill()
+                return self._read_output(proc)
+            except subprocess.TimeoutExpired, RuntimeError:
+                self._kill_process_group(proc)
                 proc.wait()
                 raise
-            if proc.returncode != 0:
-                err_text = (
-                    stderr.decode("utf-8", errors="replace").strip() if stderr else "Unknown error"
-                )
-                raise RuntimeError(f"Subprocess exited with code {proc.returncode}: {err_text}")
-            raw = stdout.decode("utf-8", errors="replace") if stdout else ""
-            if len(raw) > MAX_OUTPUT_BYTES:
-                raise RuntimeError(f"Output exceeds {MAX_OUTPUT_BYTES} bytes ({len(raw)} bytes)")
-            return raw.strip()
+
+    @staticmethod
+    def _kill_process_group(proc: subprocess.Popen[bytes]) -> None:
+        """Kill the entire process group rooted at proc."""
+        try:
+            os.killpg(proc.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        except PermissionError:
+            pass
+        except OSError:
+            try:
+                proc.kill()
+            except OSError:
+                pass

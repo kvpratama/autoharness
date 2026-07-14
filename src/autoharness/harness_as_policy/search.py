@@ -116,6 +116,12 @@ def synthesize(
         executor=policy_executor,
     )
 
+    try:
+        adapter.create()
+        adapter.reset(seed=None)
+    except Exception as e:
+        raise RuntimeError(f"Environment preflight failed — cannot start synthesis: {e}") from e
+
     store.write_config(
         {
             "run_id": run_id,
@@ -158,8 +164,14 @@ def synthesize(
         if stop_reason:
             break
 
-        pool = _evaluated_candidates() if iteration > 1 else candidates
-        parent_id = select_candidate(pool, rng) if pool else "000"
+        pool = _evaluated_candidates()
+        if not pool:
+            if iteration == 1:
+                pool = candidates
+            else:
+                stop_reason = "no evaluated candidates to select"
+                break
+        parent_id = select_candidate(pool, rng)
         if parent_id is None:
             stop_reason = "no candidates to select"
             break

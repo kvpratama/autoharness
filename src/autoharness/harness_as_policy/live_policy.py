@@ -30,6 +30,7 @@ class LiveActionResult:
     model_calls: int = 1
     input_tokens: int = 0
     output_tokens: int = 0
+    estimated_cost_usd: float | None = None
     error_details: str | None = None
 
 
@@ -98,10 +99,17 @@ class LivePolicy:
         if hasattr(response, "usage_metadata") and response.usage_metadata:
             input_tokens = response.usage_metadata.get("input_tokens", 0) or 0
             output_tokens = response.usage_metadata.get("output_tokens", 0) or 0
+        estimated_cost_usd: float | None = None
+        if self._input_price_per_million is not None and self._output_price_per_million is not None:
+            estimated_cost_usd = (
+                input_tokens * self._input_price_per_million
+                + output_tokens * self._output_price_per_million
+            ) / 1_000_000
         return LiveActionResult(
             action=action,
             success=True,
             latency=latency,
             input_tokens=input_tokens,
             output_tokens=output_tokens,
+            estimated_cost_usd=estimated_cost_usd,
         )

@@ -6,7 +6,7 @@ from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import AIMessage
 from langchain_core.outputs import ChatGeneration, ChatResult
 
-from src.autoharness.harness_as_policy.refiner import (
+from autoharness.harness_as_policy.refiner import (
     Refiner,
     build_refiner_prompt,
 )

@@ -7,14 +7,16 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from src.autoharness.harness_as_policy.config import Settings
-from src.autoharness.harness_as_policy.evaluation import (
+from autoharness.harness_as_policy.config import Settings
+from autoharness.harness_as_policy.evaluation import (
     evaluate_policy,
     format_evaluation_summary,
 )
-from src.autoharness.harness_as_policy.refiner import Refiner
-from src.autoharness.harness_as_policy.search import synthesize
-from src.autoharness.harness_as_policy.tower_of_hanoi import (
+from autoharness.harness_as_policy.live_policy import LivePolicy
+from autoharness.harness_as_policy.refiner import Refiner
+from autoharness.harness_as_policy.search import synthesize
+from autoharness.harness_as_policy.tower_of_hanoi import (
+    DIFFICULTY_MAP,
     TowerOfHanoiAdapter,
 )
 
@@ -86,6 +88,9 @@ def _build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+_ENV_TO_DIFFICULTY: dict[str, str] = {env_id: diff for diff, (env_id, _) in DIFFICULTY_MAP.items()}
+
+
 def synthesize_cmd(
     args: argparse.Namespace | None = None,
 ) -> dict[str, Any] | None:
@@ -110,7 +115,8 @@ def synthesize_cmd(
 
     settings = Settings(**settings_kwargs)
 
-    adapter = TowerOfHanoiAdapter(difficulty="v0")
+    difficulty = _ENV_TO_DIFFICULTY.get(settings.env_id, "v0")
+    adapter = TowerOfHanoiAdapter(difficulty=difficulty)
 
     refiner = Refiner(model_id=settings.model)
 
@@ -121,6 +127,9 @@ def synthesize_cmd(
         artifact_root=Path(settings.artifact_root),
         seed=settings.thompson_seed,
         refinements=settings.effective_refinements,
+        execution_timeout=settings.execution_timeout,
+        max_source_size=settings.max_source_size,
+        model_id=settings.model,
     )
     print(f"Run ID: {result.get('run_id', 'unknown')}")
     print(f"Stop reason: {result.get('stop_reason', 'unknown')}")
@@ -140,6 +149,29 @@ def evaluate_cmd(run_dir: Path) -> list[Any] | None:
     results = evaluate_policy(source=source)
     summary = format_evaluation_summary(results)
     print(summary)
+
+    from autoharness.harness_as_policy.artifacts import ArtifactStore
+
+    store = ArtifactStore(root=run_dir.parent, run_id=run_dir.name)
+    store.write_evaluation(
+        "generated-policy",
+        {
+            "results": [
+                {
+                    "env_id": r.env_id,
+                    "solved": r.solved,
+                    "reward": r.reward,
+                    "legal_action_count": r.legal_action_count,
+                    "steps_used": r.steps_used,
+                    "optimal_steps": r.optimal_steps,
+                    "illegal_action_reason": r.illegal_action_reason,
+                    "latency": r.latency,
+                    "execution_failure": r.execution_failure,
+                }
+                for r in results
+            ],
+        },
+    )
     return results
 
 
@@ -150,19 +182,19 @@ def evaluate_baseline_cmd(
     """Run the live-LLM baseline evaluate command."""
     import time
 
-    from src.autoharness.harness_as_policy.evaluation import (
+    from autoharness.harness_as_policy.evaluation import (
         DIFFICULTIES,
         EvaluationResult,
     )
 
     results: list[EvaluationResult] = []
-    model_call_count = 0
-    input_tokens = 0
-    output_tokens = 0
+    total_model_calls = 0
+    total_input_tokens = 0
+    total_output_tokens = 0
 
     for diff_key, env_id, _max_steps, optimal in DIFFICULTIES:
         adapter = TowerOfHanoiAdapter(difficulty=diff_key)
-        refiner = Refiner(model_id=model_id)
+        live_policy = LivePolicy(model_id=model_id)
         try:
             adapter.create()
             adapter.reset()
@@ -187,26 +219,19 @@ def evaluate_baseline_cmd(
         reward = 0.0
         steps_used = 0
         illegal_reason: str | None = None
-        (adapter._observation if hasattr(adapter, "_observation") else "")
+        observation = adapter._observation if hasattr(adapter, "_observation") else ""
         for _ in range(adapter.max_steps):
             steps_used += 1
-            try:
-                response = refiner.refine(
-                    env_name=adapter.env_id,
-                    rules=adapter.rules,
-                    action_format=adapter.action_format,
-                    parent_source="",
-                    parent_heuristic=0.0,
-                    parent_reward=0.0,
-                    parent_legal_actions=0,
-                    parent_status="unknown",
-                    feedback=["Live policy mode"],
-                )
-                model_call_count += 1
-                action = response.source if response.success and response.source else ""
-            except Exception:
-                action = ""
-            if not action:
+            action_result = live_policy.act(
+                env_name=adapter.env_id,
+                rules=adapter.rules,
+                action_format=adapter.action_format,
+                observation=observation,
+            )
+            total_model_calls += action_result.model_calls
+            total_input_tokens += action_result.input_tokens
+            total_output_tokens += action_result.output_tokens
+            if not action_result.success or not action_result.action:
                 results.append(
                     EvaluationResult(
                         env_id=env_id,
@@ -215,13 +240,13 @@ def evaluate_baseline_cmd(
                         legal_action_count=legal_actions,
                         steps_used=steps_used,
                         optimal_steps=optimal,
-                        illegal_action_reason="model_error",
+                        illegal_action_reason=(action_result.error_details or "model_error"),
                         latency=time.monotonic() - start,
                         execution_failure=True,
                     )
                 )
                 break
-            step_result = adapter.step(action)
+            step_result = adapter.step(action_result.action)
             if not step_result.is_legal:
                 illegal_reason = step_result.feedback or "Illegal"
                 results.append(
@@ -256,6 +281,7 @@ def evaluate_baseline_cmd(
                     )
                 )
                 break
+            observation = step_result.observation
         else:
             results.append(
                 EvaluationResult(
@@ -272,10 +298,12 @@ def evaluate_baseline_cmd(
             )
 
     summary = format_evaluation_summary(results)
-    summary += f"\n  Model calls: {model_call_count}\n"
+    summary += f"\n  Model calls: {total_model_calls}\n"
+    summary += f"  Input tokens: {total_input_tokens}\n"
+    summary += f"  Output tokens: {total_output_tokens}\n"
     print(summary)
 
-    from src.autoharness.harness_as_policy.artifacts import ArtifactStore
+    from autoharness.harness_as_policy.artifacts import ArtifactStore
 
     store = ArtifactStore(root=run_dir.parent, run_id=run_dir.name)
     store.write_evaluation(
@@ -295,9 +323,9 @@ def evaluate_baseline_cmd(
                 }
                 for r in results
             ],
-            "model_call_count": model_call_count,
-            "input_tokens": input_tokens,
-            "output_tokens": output_tokens,
+            "model_call_count": total_model_calls,
+            "input_tokens": total_input_tokens,
+            "output_tokens": total_output_tokens,
         },
     )
     return results

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-from src.autoharness.harness_as_policy.models import Profile
+from autoharness.harness_as_policy.models import Profile
 
 
 class Settings(BaseSettings):
@@ -16,7 +16,7 @@ class Settings(BaseSettings):
         extra="ignore",
     )
 
-    model: str = "google_genai:gemini-2.5-flash"
+    model: str
     env_id: str = "TowerOfHanoi-v0"
     profile: Profile = Profile.SMOKE
     refinements: int | None = None

@@ -7,9 +7,9 @@ import uuid
 from pathlib import Path
 from typing import Any
 
-from src.autoharness.harness_as_policy.artifacts import ArtifactStore
-from src.autoharness.harness_as_policy.executor import PolicyExecutor
-from src.autoharness.harness_as_policy.models import (
+from autoharness.harness_as_policy.artifacts import ArtifactStore
+from autoharness.harness_as_policy.executor import PolicyExecutor
+from autoharness.harness_as_policy.models import (
     Candidate,
     CandidateRankKey,
     Event,
@@ -17,7 +17,7 @@ from src.autoharness.harness_as_policy.models import (
     RolloutResult,
     TerminationReason,
 )
-from src.autoharness.harness_as_policy.rollout import RolloutEvaluator
+from autoharness.harness_as_policy.rollout import RolloutEvaluator
 
 
 def beta_parameters(
@@ -98,13 +98,19 @@ def synthesize(
     artifact_root: Path,
     seed: int = 42,
     refinements: int | None = None,
+    execution_timeout: int = 10,
+    max_source_size: int = 32768,
+    model_id: str = "",
 ) -> dict[str, Any]:
     """Run the full synthesis workflow. Returns summary dict."""
     run_id = uuid.uuid4().hex[:12]
     store = ArtifactStore(root=artifact_root, run_id=run_id)
     rng = random.Random(seed)
     max_refinements = refinements if refinements is not None else profile.refinements
-    policy_executor = PolicyExecutor()
+    policy_executor = PolicyExecutor(
+        timeout=execution_timeout,
+        max_source_size=max_source_size,
+    )
     evaluator = RolloutEvaluator(
         adapter=adapter,
         executor=policy_executor,
@@ -117,7 +123,9 @@ def synthesize(
             "max_refinements": max_refinements,
             "thompson_seed": seed,
             "env_id": adapter.env_id,
-            "model_call_count": 0,
+            "execution_timeout": execution_timeout,
+            "max_source_size": max_source_size,
+            "model_id": model_id,
         }
     )
 
@@ -141,12 +149,17 @@ def synthesize(
     model_call_count = 0
     logical_refinement_count = 0
 
+    def _evaluated_candidates() -> dict[str, Candidate]:
+        """Candidates for selection/ranking: excludes root, requires non-empty source."""
+        return {cid: c for cid, c in candidates.items() if cid != "000" and c.source.strip()}
+
     for iteration in range(1, max_refinements + 1):
         stop_reason = should_stop(candidates, iteration - 1, max_refinements)
         if stop_reason:
             break
 
-        parent_id = select_candidate(candidates, rng)
+        pool = _evaluated_candidates() if iteration > 1 else candidates
+        parent_id = select_candidate(pool, rng) if pool else "000"
         if parent_id is None:
             stop_reason = "no candidates to select"
             break
@@ -228,6 +241,9 @@ def synthesize(
                 failure_summary=child.failure_summary,
             )
             store.write_rollout(child_id, rollout_result)
+            current_best = find_best_candidate(_evaluated_candidates())
+            if current_best:
+                best_id = current_best
             continue
 
         store.write_candidate(child_id, refine_result.source)
@@ -267,7 +283,7 @@ def synthesize(
             )
         )
 
-        current_best = find_best_candidate(candidates)
+        current_best = find_best_candidate(_evaluated_candidates())
         if current_best:
             best_id = current_best
 

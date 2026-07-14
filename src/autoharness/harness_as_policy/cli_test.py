@@ -6,15 +6,15 @@ import tempfile
 from pathlib import Path
 from unittest.mock import patch
 
-from src.autoharness.cli import evaluate_cmd, main, synthesize_cmd
+from autoharness.cli import evaluate_cmd, main, synthesize_cmd
 
 
 def test_synthesize_cmd_requires_env() -> None:
     """synthesize command requires --env flag."""
     with (
         tempfile.TemporaryDirectory() as tmpdir,
-        patch("src.autoharness.cli.Refiner"),
-        patch("src.autoharness.cli.synthesize") as mock_synthesize,
+        patch("autoharness.cli.Refiner"),
+        patch("autoharness.cli.synthesize") as mock_synthesize,
     ):
         mock_synthesize.return_value = {
             "run_id": "test123",
@@ -35,6 +35,8 @@ def test_synthesize_cmd_requires_env() -> None:
                 "TowerOfHanoi-v0",
                 "--profile",
                 "smoke",
+                "--model",
+                "anthropic:claude-3-opus",
                 "--artifact-root",
                 tmpdir,
             ],
@@ -48,8 +50,8 @@ def test_synthesize_cmd_creates_artifacts() -> None:
     """synthesize command creates artifact files."""
     with (
         tempfile.TemporaryDirectory() as tmpdir,
-        patch("src.autoharness.cli.Refiner"),
-        patch("src.autoharness.cli.synthesize") as mock_synthesize,
+        patch("autoharness.cli.Refiner"),
+        patch("autoharness.cli.synthesize") as mock_synthesize,
     ):
         mock_synthesize.return_value = {
             "run_id": "test",
@@ -71,6 +73,8 @@ def test_synthesize_cmd_creates_artifacts() -> None:
                 "TowerOfHanoi-v0",
                 "--profile",
                 "smoke",
+                "--model",
+                "anthropic:claude-3-opus",
                 "--artifact-root",
                 tmpdir,
             ],
@@ -86,9 +90,9 @@ def test_evaluate_cmd_requires_run() -> None:
     with tempfile.TemporaryDirectory() as tmpdir:
         # Create the best.py file that evaluate_cmd looks for
         (Path(tmpdir) / "best.py").write_text("def propose_action(obs): return '[A C]'")
-        with patch("src.autoharness.cli.evaluate_policy") as mock_eval:
+        with patch("autoharness.cli.evaluate_policy") as mock_eval:
             mock_eval.return_value = []
-            with patch("src.autoharness.cli.format_evaluation_summary") as mock_fmt:
+            with patch("autoharness.cli.format_evaluation_summary") as mock_fmt:
                 mock_fmt.return_value = "summary"
                 result = evaluate_cmd(run_dir=Path(tmpdir))
     assert result is not None
@@ -98,8 +102,8 @@ def test_main_synthesize_dispatches() -> None:
     """main dispatches synthesize command."""
     with (
         tempfile.TemporaryDirectory() as tmpdir,
-        patch("src.autoharness.cli.Refiner"),
-        patch("src.autoharness.cli.synthesize") as mock_synthesize,
+        patch("autoharness.cli.Refiner"),
+        patch("autoharness.cli.synthesize") as mock_synthesize,
     ):
         mock_synthesize.return_value = {"run_id": "test"}
         with patch(
@@ -109,6 +113,8 @@ def test_main_synthesize_dispatches() -> None:
                 "synthesize",
                 "--env",
                 "TowerOfHanoi-v0",
+                "--model",
+                "anthropic:claude-3-opus",
                 "--artifact-root",
                 tmpdir,
             ],

@@ -6,12 +6,12 @@ import random
 import tempfile
 from pathlib import Path
 
-from src.autoharness.harness_as_policy.models import (
+from autoharness.harness_as_policy.models import (
     Candidate,
     Profile,
     TerminationReason,
 )
-from src.autoharness.harness_as_policy.search import (
+from autoharness.harness_as_policy.search import (
     beta_parameters,
     find_best_candidate,
     select_candidate,

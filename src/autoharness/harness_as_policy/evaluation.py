@@ -6,8 +6,8 @@ import time
 from dataclasses import dataclass
 from typing import Any
 
-from src.autoharness.harness_as_policy.executor import PolicyExecutor
-from src.autoharness.harness_as_policy.tower_of_hanoi import TowerOfHanoiAdapter
+from autoharness.harness_as_policy.executor import PolicyExecutor
+from autoharness.harness_as_policy.tower_of_hanoi import TowerOfHanoiAdapter
 
 
 @dataclass
@@ -35,13 +35,14 @@ DIFFICULTIES = [
 
 def _optimal_steps(disks: int) -> int:
     """Optimal number of moves to solve n-disk Tower of Hanoi (2^n - 1)."""
-    return (2 ** (disks + 2)) - 1  # 3 disks -> 7, 4 -> 15, etc.
+    return (2**disks) - 1  # 3 disks -> 7, 4 -> 15, etc.
 
 
 def evaluate_policy_on_env(
     adapter: Any,
     executor: Any,
     source: str,
+    optimal_steps: int = 0,
 ) -> EvaluationResult:
     """Evaluate a generated policy on one environment without model calls."""
     try:
@@ -54,7 +55,7 @@ def evaluate_policy_on_env(
             reward=0.0,
             legal_action_count=0,
             steps_used=0,
-            optimal_steps=adapter.max_steps,
+            optimal_steps=optimal_steps or adapter.max_steps,
             illegal_action_reason=None,
             latency=0.0,
             execution_failure=True,
@@ -81,7 +82,7 @@ def evaluate_policy_on_env(
                 reward=0.0,
                 legal_action_count=legal_actions,
                 steps_used=steps_used,
-                optimal_steps=adapter.max_steps,
+                optimal_steps=optimal_steps or adapter.max_steps,
                 illegal_action_reason=None,
                 latency=end - start,
                 execution_failure=True,
@@ -96,7 +97,7 @@ def evaluate_policy_on_env(
                 reward=0.0,
                 legal_action_count=legal_actions,
                 steps_used=steps_used,
-                optimal_steps=adapter.max_steps,
+                optimal_steps=optimal_steps or adapter.max_steps,
                 illegal_action_reason=(step_result.feedback or "Illegal action"),
                 latency=end - start,
                 execution_failure=False,
@@ -112,7 +113,7 @@ def evaluate_policy_on_env(
                 reward=reward,
                 legal_action_count=legal_actions,
                 steps_used=steps_used,
-                optimal_steps=adapter.max_steps,
+                optimal_steps=optimal_steps or adapter.max_steps,
                 illegal_action_reason=illegal_reason,
                 latency=end - start,
                 execution_failure=False,
@@ -125,7 +126,7 @@ def evaluate_policy_on_env(
         reward=0.0,
         legal_action_count=legal_actions,
         steps_used=steps_used,
-        optimal_steps=adapter.max_steps,
+        optimal_steps=optimal_steps or adapter.max_steps,
         illegal_action_reason="step_limit",
         latency=end - start,
         execution_failure=False,
@@ -144,12 +145,13 @@ def evaluate_policy(
         difficulties = DIFFICULTIES
     results: list[EvaluationResult] = []
     executor = PolicyExecutor()
-    for diff_key, _env_id, _max_steps_var, _optimal in difficulties:
+    for diff_key, _env_id, _max_steps_var, optimal in difficulties:
         adapter = TowerOfHanoiAdapter(difficulty=diff_key)
         result = evaluate_policy_on_env(
             adapter=adapter,
             executor=executor,
             source=source,
+            optimal_steps=optimal,
         )
         results.append(result)
     return results

@@ -4,12 +4,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from src.autoharness.harness_as_policy.evaluation import (
+from autoharness.harness_as_policy.evaluation import (
     EvaluationResult,
     evaluate_policy_on_env,
     format_evaluation_summary,
 )
-from src.autoharness.harness_as_policy.models import StepResult
+from autoharness.harness_as_policy.models import StepResult
 
 
 @dataclass

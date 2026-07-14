@@ -6,7 +6,7 @@ import json
 from pathlib import Path
 from typing import Any
 
-from src.autoharness.harness_as_policy.models import Event, RolloutResult
+from autoharness.harness_as_policy.models import Event, RolloutResult
 
 
 class ArtifactStore:

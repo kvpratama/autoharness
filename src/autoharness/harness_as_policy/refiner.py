@@ -140,6 +140,7 @@ class Refiner:
         env_name: str = "",
     ) -> RefinerResult:
         """Call the model to refine the parent policy."""
+        self._logical_refinement_count += 1
         prompt = build_refiner_prompt(
             env_name=env_name,
             rules=rules,
@@ -165,9 +166,7 @@ class Refiner:
             content = raw if isinstance(raw, str) else str(raw)
             source = _extract_source(content)
             if source and "propose_action" in source:
-                self._logical_refinement_count += 1
                 return RefinerResult(success=True, source=source)
-            self._logical_refinement_count += 1
             return RefinerResult(
                 success=False,
                 source=None,

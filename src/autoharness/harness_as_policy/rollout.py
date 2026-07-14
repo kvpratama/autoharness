@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from typing import Protocol
 
-from src.autoharness.harness_as_policy.executor import ExecutionResult, PolicyExecutor
-from src.autoharness.harness_as_policy.models import (
+from autoharness.harness_as_policy.executor import ExecutionResult, PolicyExecutor
+from autoharness.harness_as_policy.models import (
     RolloutResult,
     StepResult,
     TerminationReason,

@@ -8,8 +8,8 @@ from pathlib import Path
 
 import pytest
 
-from src.autoharness.harness_as_policy.artifacts import ArtifactStore
-from src.autoharness.harness_as_policy.models import (
+from autoharness.harness_as_policy.artifacts import ArtifactStore
+from autoharness.harness_as_policy.models import (
     Event,
     RolloutResult,
     StepResult,

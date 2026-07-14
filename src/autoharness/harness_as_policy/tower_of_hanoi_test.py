@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import pytest
 
-from src.autoharness.harness_as_policy.environment import EnvironmentAdapter
-from src.autoharness.harness_as_policy.tower_of_hanoi import (
+from autoharness.harness_as_policy.environment import EnvironmentAdapter
+from autoharness.harness_as_policy.tower_of_hanoi import (
     DIFFICULTY_MAP,
     TowerOfHanoiAdapter,
 )

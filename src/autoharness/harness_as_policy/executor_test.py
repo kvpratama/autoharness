@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import textwrap
 
-from src.autoharness.harness_as_policy.executor import (
+from autoharness.harness_as_policy.executor import (
     SAFE_IMPORTS,
     PolicyExecutor,
 )

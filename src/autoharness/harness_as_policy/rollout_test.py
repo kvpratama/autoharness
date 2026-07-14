@@ -4,12 +4,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from src.autoharness.harness_as_policy.executor import ExecutionResult
-from src.autoharness.harness_as_policy.models import (
+from autoharness.harness_as_policy.executor import ExecutionResult
+from autoharness.harness_as_policy.models import (
     StepResult,
     TerminationReason,
 )
-from src.autoharness.harness_as_policy.rollout import RolloutEvaluator
+from autoharness.harness_as_policy.rollout import RolloutEvaluator
 
 
 @dataclass

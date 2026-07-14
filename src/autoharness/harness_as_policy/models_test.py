@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from src.autoharness.harness_as_policy.models import (
+from autoharness.harness_as_policy.models import (
     Candidate,
     CandidateRankKey,
     Event,

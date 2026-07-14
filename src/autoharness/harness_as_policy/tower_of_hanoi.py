@@ -7,7 +7,7 @@ from typing import Any
 
 import textarena as ta
 
-from src.autoharness.harness_as_policy.models import StepResult
+from autoharness.harness_as_policy.models import StepResult
 
 DIFFICULTY_MAP: dict[str, tuple[str, int]] = {
     "v0": ("TowerOfHanoi-v0", 14),
@@ -16,7 +16,7 @@ DIFFICULTY_MAP: dict[str, tuple[str, int]] = {
     "hardcore": ("TowerOfHanoi-v0-hardcore", 126),
 }
 
-BRACKETED_MOVE_RE = re.compile(r"\[.*?\]")
+BRACKETED_MOVE_RE = re.compile(r"\s*\[([ABC])\s*,?\s*([ABC])\]\s*", re.IGNORECASE)
 
 INVALID_MOVE_SIGNAL = "attempted an invalid move"
 
@@ -92,17 +92,15 @@ class TowerOfHanoiAdapter:
                 terminated=True,
                 feedback="Malformed action: empty or whitespace-only output",
             )
-        matches = BRACKETED_MOVE_RE.findall(action)
-        if len(matches) != 1:
+        match = BRACKETED_MOVE_RE.fullmatch(action)
+        if not match:
             return StepResult(
                 observation=self._observation,
                 action=action,
                 is_legal=False,
                 reward=0.0,
                 terminated=True,
-                feedback=(
-                    f"Malformed action: expected exactly one bracketed move, got {len(matches)}"
-                ),
+                feedback=("Malformed action: expected exactly one bracketed move, e.g. [A C]"),
             )
         # Submit to TextArena
         done, _ = self._env.step(action=action)

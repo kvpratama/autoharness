@@ -367,7 +367,9 @@ def evaluate_baseline_cmd(
             "model_call_count": total_model_calls,
             "input_tokens": total_input_tokens,
             "output_tokens": total_output_tokens,
-            "estimated_cost_usd": total_estimated_cost if input_price is not None else None,
+            "estimated_cost_usd": total_estimated_cost
+            if input_price is not None and output_price is not None
+            else None,
         },
     )
     return results

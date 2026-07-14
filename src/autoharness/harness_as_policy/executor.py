@@ -76,6 +76,7 @@ DANGEROUS_BUILTINS: set[str] = {
 }
 
 MAX_OUTPUT_BYTES: int = 65536
+MAX_STDERR_BYTES: int = 65536
 
 
 @dataclass
@@ -212,12 +213,40 @@ class PolicyExecutor:
             "breakpoint", "input",
             "getattr", "setattr", "delattr",
             "vars", "globals", "locals",
+            "__import__",
         }}
         _allowed_builtins = {{}}
         for _key, _val in vars(builtins).items():
             if _key in _disallowed:
                 continue
             _allowed_builtins[_key] = _val
+
+        _safe_import_names = {{"math", "random", "re", "typing",
+            "itertools", "collections", "functools", "dataclasses",
+            "enum", "string"}}
+
+        class _ModuleProxy:
+            def __init__(self, _m):
+                object.__setattr__(self, "_m", _m)
+            def __getattr__(self, _n):
+                if _n.startswith("_"):
+                    msg = "Access to private attribute '{{}}' is not allowed".format(_n)
+                    raise AttributeError(msg)
+                return getattr(self._m, _n)
+
+        _orig_import = builtins.__import__
+
+        def _safe_import(_name, _g=None, _l=None, _fl=(), _lv=0):
+            _top = _name.split(".")[0]
+            if _top not in _safe_import_names:
+                msg = "Disallowed import: {{}}".format(_name)
+                raise ImportError(msg)
+            _mod = _orig_import(_name, _g, _l, _fl, _lv)
+            _wrap = _ModuleProxy(_mod)
+            sys.modules[_top] = _wrap
+            return _wrap
+
+        _allowed_builtins["__import__"] = _safe_import
 
         _globals = {{"__builtins__": _allowed_builtins, "__name__": "__policy__"}}
         exec(compile({source!r}, "<policy>", "exec"), _globals)
@@ -239,6 +268,7 @@ class PolicyExecutor:
         stdout_chunks: list[bytes] = []
         stderr_chunks: list[bytes] = []
         total_out = 0
+        total_err = 0
         deadline = time.monotonic() + self._timeout
 
         while True:
@@ -265,6 +295,9 @@ class PolicyExecutor:
                         raise RuntimeError(f"Output exceeds {MAX_OUTPUT_BYTES} bytes")
                 else:
                     stderr_chunks.append(data)
+                    total_err += len(data)
+                    if total_err > MAX_STDERR_BYTES:
+                        raise RuntimeError(f"Stderr exceeds {MAX_STDERR_BYTES} bytes")
 
             if proc.poll() is not None:
                 for fd, dest in ((stdout, stdout_chunks), (stderr, stderr_chunks)):
@@ -278,6 +311,10 @@ class PolicyExecutor:
                                 total_out += len(chunk)
                                 if total_out > MAX_OUTPUT_BYTES:
                                     raise RuntimeError(f"Output exceeds {MAX_OUTPUT_BYTES} bytes")
+                            else:
+                                total_err += len(chunk)
+                                if total_err > MAX_STDERR_BYTES:
+                                    raise RuntimeError(f"Stderr exceeds {MAX_STDERR_BYTES} bytes")
                     except ValueError, OSError:
                         pass
                 break

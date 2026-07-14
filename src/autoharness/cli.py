@@ -7,6 +7,8 @@ import sys
 from pathlib import Path
 from typing import Any
 
+from dotenv import load_dotenv
+
 from autoharness.harness_as_policy.config import Settings
 from autoharness.harness_as_policy.evaluation import (
     evaluate_policy,
@@ -377,6 +379,7 @@ def evaluate_baseline_cmd(
 
 def main(args: list[str] | None = None) -> int:
     """Main entry point."""
+    load_dotenv()
     parser = _build_parser()
     parsed = parser.parse_args(args)
 

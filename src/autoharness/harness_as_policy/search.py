@@ -108,7 +108,7 @@ def synthesize(
 ) -> dict[str, Any]:
     """Run the full synthesis workflow. Returns summary dict."""
     now = datetime.now()
-    run_id = now.strftime("%Y-%m-%d-%H%M%S") + "-" + uuid.uuid4().hex[:8]
+    run_id = now.strftime("%y%m%d%H%M%S") + "-" + uuid.uuid4().hex[:8]
     store = ArtifactStore(root=artifact_root, run_id=run_id)
     rng = random.Random(seed)
     max_refinements = refinements if refinements is not None else profile.refinements
@@ -231,6 +231,9 @@ def synthesize(
         ):
             feedback.append("Policy execution failed at runtime")
 
+        if parent.last_observation:
+            feedback.append(f"Last observation before termination: {parent.last_observation}")
+
         refine_result = refiner.refine(
             env_name=adapter.env_id,
             rules=adapter.rules,
@@ -272,6 +275,7 @@ def synthesize(
                 legal_action_count=0,
                 termination_reason=TerminationReason.CONTRACT_FAILURE,
                 failure_summary=(refine_result.error_details or "Refinement failed"),
+                last_observation=None,
                 iteration=iteration,
                 expansion_count=0,
             )
@@ -311,6 +315,7 @@ def synthesize(
             legal_action_count=rollout_result.legal_action_count,
             termination_reason=rollout_result.termination_reason,
             failure_summary=rollout_result.failure_summary,
+            last_observation=rollout_result.last_observation,
             iteration=iteration,
             expansion_count=0,
         )

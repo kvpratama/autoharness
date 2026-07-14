@@ -87,6 +87,7 @@ class RolloutEvaluator:
                     legal_action_count=len([s for s in steps if s.is_legal]),
                     termination_reason=reason,
                     failure_summary=exec_result.error_details,
+                    last_observation=steps[-1].observation if steps else None,
                 )
             action = exec_result.output or ""
             step_result = self._adapter.step(action)
@@ -99,6 +100,7 @@ class RolloutEvaluator:
                     legal_action_count=len([s for s in steps if s.is_legal]),
                     termination_reason=TerminationReason.ILLEGAL_ACTION,
                     failure_summary=step_result.feedback or "Illegal action",
+                    last_observation=steps[-1].observation if steps else None,
                 )
             if step_result.terminated:
                 h = heuristic(is_legal=True, reward=step_result.reward)
@@ -109,6 +111,7 @@ class RolloutEvaluator:
                     legal_action_count=len([s for s in steps if s.is_legal]),
                     termination_reason=TerminationReason.ENVIRONMENT_TERMINATION,
                     failure_summary=None,
+                    last_observation=steps[-1].observation if steps else None,
                 )
             observation = step_result.observation
         # Step limit reached
@@ -119,4 +122,5 @@ class RolloutEvaluator:
             legal_action_count=len([s for s in steps if s.is_legal]),
             termination_reason=TerminationReason.STEP_LIMIT,
             failure_summary=None,
+            last_observation=steps[-1].observation if steps else None,
         )

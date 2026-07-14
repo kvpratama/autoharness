@@ -50,6 +50,7 @@ class RolloutResult:
     legal_action_count: int
     termination_reason: TerminationReason
     failure_summary: str | None
+    last_observation: str | None = None
 
 
 @dataclass
@@ -66,6 +67,7 @@ class Candidate:
     failure_summary: str | None
     iteration: int
     expansion_count: int = 0
+    last_observation: str | None = None
 
 
 @dataclass

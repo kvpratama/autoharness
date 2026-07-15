@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Protocol
 
+from autoharness.harness_as_policy.environment import EnvironmentAdapter
 from autoharness.harness_as_policy.executor import ExecutionResult, PolicyExecutor
 from autoharness.harness_as_policy.models import (
     RolloutResult,
@@ -11,22 +12,6 @@ from autoharness.harness_as_policy.models import (
     TerminationReason,
     heuristic,
 )
-
-
-class EnvironmentAdapter(Protocol):
-    """Protocol for environment adapters."""
-
-    @property
-    def env_id(self) -> str: ...
-    @property
-    def rules(self) -> str: ...
-    @property
-    def action_format(self) -> str: ...
-    @property
-    def max_steps(self) -> int: ...
-    def create(self) -> None: ...
-    def reset(self, seed: int | None = None) -> str: ...
-    def step(self, action: str) -> StepResult: ...
 
 
 class ExecutorProtocol(Protocol):

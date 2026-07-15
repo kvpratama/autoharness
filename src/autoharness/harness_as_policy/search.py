@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from autoharness.harness_as_policy.artifacts import ArtifactStore
+from autoharness.harness_as_policy.environment import EnvironmentAdapter
 from autoharness.harness_as_policy.executor import PolicyExecutor
 from autoharness.harness_as_policy.models import (
     Candidate,
@@ -96,7 +97,7 @@ ROOT_SOURCE = """def propose_action(observation: str) -> str:
 
 
 def synthesize(
-    adapter: Any,
+    adapter: EnvironmentAdapter,
     profile: Profile,
     refiner: Any,
     artifact_root: Path,

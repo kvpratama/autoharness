@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass
-from typing import Any
+from typing import Protocol
 
+from autoharness.harness_as_policy.environment import EnvironmentAdapter
 from autoharness.harness_as_policy.executor import PolicyExecutor
 from autoharness.harness_as_policy.tower_of_hanoi import TowerOfHanoiAdapter
 
@@ -25,6 +26,19 @@ class EvaluationResult:
     execution_failure: bool
 
 
+class ExecutionOutcome(Protocol):
+    """Protocol for policy execution results used by evaluation."""
+
+    success: bool
+    output: str | None
+
+
+class ExecutorProtocol(Protocol):
+    """Protocol for policy executors used by evaluation."""
+
+    def execute(self, source: str, observation: str) -> ExecutionOutcome: ...
+
+
 DIFFICULTIES = [
     ("v0", "TowerOfHanoi-v0", 14, 7),
     ("medium", "TowerOfHanoi-v0-medium", 30, 15),
@@ -39,15 +53,15 @@ def _optimal_steps(disks: int) -> int:
 
 
 def evaluate_policy_on_env(
-    adapter: Any,
-    executor: Any,
+    adapter: EnvironmentAdapter,
+    executor: ExecutorProtocol,
     source: str,
     optimal_steps: int = 0,
 ) -> EvaluationResult:
     """Evaluate a generated policy on one environment without model calls."""
     try:
         adapter.create()
-        adapter.reset(seed=None)
+        observation = adapter.reset(seed=None)
     except Exception:
         return EvaluationResult(
             env_id=adapter.env_id,
@@ -68,11 +82,7 @@ def evaluate_policy_on_env(
     reward = 0.0
 
     for _ in range(adapter.max_steps):
-        try:
-            obs = adapter._observation if hasattr(adapter, "_observation") else adapter.reset()
-        except Exception:
-            obs = ""
-        exec_result = executor.execute(source, obs)
+        exec_result = executor.execute(source, observation)
         steps_used += 1
         if not exec_result.success:
             end = time.monotonic()
@@ -102,6 +112,7 @@ def evaluate_policy_on_env(
                 latency=end - start,
                 execution_failure=False,
             )
+        observation = step_result.observation
         legal_actions += 1
         if step_result.terminated:
             end = time.monotonic()

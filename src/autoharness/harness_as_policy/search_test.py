@@ -9,6 +9,7 @@ from pathlib import Path
 from autoharness.harness_as_policy.models import (
     Candidate,
     Profile,
+    StepResult,
     TerminationReason,
 )
 from autoharness.harness_as_policy.search import (
@@ -216,8 +217,15 @@ class FakeAdapter:
     def reset(self, seed: int | None = None) -> str:
         return "initial observation"
 
-    def step(self, action: str) -> None:
-        return None
+    def step(self, action: str) -> StepResult:
+        return StepResult(
+            observation="next observation",
+            action=action,
+            is_legal=True,
+            reward=0.0,
+            terminated=False,
+            feedback="",
+        )
 
 
 class FakeRefiner:

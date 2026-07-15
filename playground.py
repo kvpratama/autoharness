@@ -117,5 +117,31 @@ def main() -> int:
     return 0 if result.success else 2
 
 
+def run_one_step(env_id: str = "TowerOfHanoi-v0", action: str = "[A C]") -> None:
+    """
+    Run one step of Tower of Hanoi and print the result.
+    """
+    import textarena as ta
+
+    _env = ta.make(env_id)
+
+    # Find and save the inner env reference
+    e = _env
+    while hasattr(e, "env"):
+        e = e.env
+    _inner_env = e
+
+    _env.reset(num_players=1, seed=42)
+
+    done, info = _env.step(action)
+
+    obs_id, obs_text = _env.get_observation()
+    print("done:", done)
+    print("info:", info)
+    print("obs_id:", obs_id)
+    print("obs_text:", obs_text)
+
+
 if __name__ == "__main__":
-    sys.exit(main())
+    # sys.exit(main())
+    run_one_step()

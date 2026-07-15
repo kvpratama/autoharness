@@ -255,8 +255,9 @@ def test_main_synthesize_dispatches() -> None:
         tempfile.TemporaryDirectory() as tmpdir,
         patch("autoharness.cli.Refiner"),
         patch("autoharness.cli.synthesize") as mock_synthesize,
+        patch("autoharness.cli.evaluate_cmd") as mock_evaluate_cmd,
     ):
-        mock_synthesize.return_value = {"run_id": "test"}
+        mock_synthesize.return_value = {"run_id": "test", "artifact_root": tmpdir}
         with patch(
             "sys.argv",
             [
@@ -272,3 +273,4 @@ def test_main_synthesize_dispatches() -> None:
         ):
             result = main()
     assert result == 0
+    mock_evaluate_cmd.assert_called_once_with(Path(tmpdir) / "test")

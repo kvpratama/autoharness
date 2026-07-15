@@ -137,7 +137,7 @@ _ENV_TO_DIFFICULTY: dict[str, str] = {env_id: diff for diff, (env_id, _) in DIFF
 
 def synthesize_cmd(
     args: argparse.Namespace | None = None,
-) -> dict[str, Any] | None:
+) -> dict[str, Any]:
     """Run the synthesize command."""
     parser = _build_parser()
     if args is None:
@@ -426,7 +426,10 @@ def main(args: list[str] | None = None) -> int:
         )
 
     if parsed.command == "synthesize":
-        synthesize_cmd(parsed)
+        summary = synthesize_cmd(parsed)
+        run_id = summary["run_id"]
+        artifact_root = summary["artifact_root"]
+        evaluate_cmd(Path(f"{artifact_root}/{run_id}"))
     elif parsed.command == "evaluate":
         evaluate_cmd(parsed.run)
     elif parsed.command == "evaluate-baseline":

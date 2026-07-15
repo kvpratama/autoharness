@@ -390,6 +390,7 @@ def synthesize(
 
     summary = {
         "run_id": run_id,
+        "artifact_root": artifact_root,
         "stop_reason": stop_reason,
         "best_candidate_id": best_id,
         "total_candidates": len(candidates),

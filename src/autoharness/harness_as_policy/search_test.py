@@ -229,6 +229,9 @@ class FakeAdapter:
             feedback="",
         )
 
+    def truncation_reward(self) -> float:
+        return 0.0
+
 
 class FakeRefiner:
     """Fake refiner that returns configured responses."""

@@ -48,13 +48,18 @@ class FakeExecutor:
 class FakeAdapter:
     """Fake adapter that follows a scripted sequence of step results."""
 
-    def __init__(self, step_results: list[StepResult] | None = None) -> None:
+    def __init__(
+        self,
+        step_results: list[StepResult] | None = None,
+        truncation_reward: float = 0.0,
+    ) -> None:
         self.env_id = "FakeEnv-v0"
         self.rules = "Fake rules"
         self.action_format = "[X Y]"
         self.max_steps = 10
         self._step_results = step_results or []
         self._step_index = -1
+        self._truncation_reward = truncation_reward
 
     def create(self) -> None:
         pass
@@ -75,6 +80,9 @@ class FakeAdapter:
             terminated=False,
             feedback="",
         )
+
+    def truncation_reward(self) -> float:
+        return self._truncation_reward
 
 
 def test_rollout_solves_environment() -> None:
@@ -171,13 +179,15 @@ def test_rollout_step_limit() -> None:
                 terminated=False,
                 feedback="",
             ),
-        ]
+        ],
+        truncation_reward=0.6,
     )
     adapter.max_steps = 3
     executor = FakeExecutor(step_results=["[A C]", "[C B]", "[A C]"])
     evaluator = RolloutEvaluator(adapter=adapter, executor=executor)
     result = evaluator.evaluate(source="dummy source")
-    assert result.heuristic == 0.5
+    assert result.heuristic == 0.8
+    assert result.terminal_reward == 0.6
     assert result.termination_reason == TerminationReason.STEP_LIMIT
 
 

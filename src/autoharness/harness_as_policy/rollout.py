@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Protocol
 
 from autoharness.harness_as_policy.environment import EnvironmentAdapter
-from autoharness.harness_as_policy.executor import ExecutionResult, PolicyExecutor
+from autoharness.harness_as_policy.executor import PolicyExecutor
 from autoharness.harness_as_policy.models import (
     RolloutResult,
     StepResult,
@@ -14,10 +14,19 @@ from autoharness.harness_as_policy.models import (
 )
 
 
+class ExecutionOutcome(Protocol):
+    """Policy execution fields consumed by a rollout."""
+
+    success: bool
+    output: str | None
+    failure_type: str | None
+    error_details: str | None
+
+
 class ExecutorProtocol(Protocol):
     """Protocol for policy executors."""
 
-    def execute(self, source: str, observation: str) -> ExecutionResult: ...
+    def execute(self, source: str, observation: str) -> ExecutionOutcome: ...
 
 
 class RolloutEvaluator:
@@ -99,11 +108,11 @@ class RolloutEvaluator:
                     last_observation=steps[-1].observation if steps else None,
                 )
             observation = step_result.observation
-        # Step limit reached
+        terminal_reward = self._adapter.truncation_reward()
         return RolloutResult(
             steps=steps,
-            heuristic=0.5,
-            terminal_reward=0.0,
+            heuristic=heuristic(is_legal=True, reward=terminal_reward),
+            terminal_reward=terminal_reward,
             legal_action_count=len([s for s in steps if s.is_legal]),
             termination_reason=TerminationReason.STEP_LIMIT,
             failure_summary=None,

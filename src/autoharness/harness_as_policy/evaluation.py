@@ -4,10 +4,11 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass
-from typing import Protocol
 
 from autoharness.harness_as_policy.environment import EnvironmentAdapter
 from autoharness.harness_as_policy.executor import PolicyExecutor
+from autoharness.harness_as_policy.models import TerminationReason
+from autoharness.harness_as_policy.rollout import ExecutorProtocol, RolloutEvaluator
 from autoharness.harness_as_policy.tower_of_hanoi import TowerOfHanoiAdapter
 
 
@@ -24,19 +25,6 @@ class EvaluationResult:
     illegal_action_reason: str | None
     latency: float
     execution_failure: bool
-
-
-class ExecutionOutcome(Protocol):
-    """Protocol for policy execution results used by evaluation."""
-
-    success: bool
-    output: str | None
-
-
-class ExecutorProtocol(Protocol):
-    """Protocol for policy executors used by evaluation."""
-
-    def execute(self, source: str, observation: str) -> ExecutionOutcome: ...
 
 
 DIFFICULTIES = [
@@ -59,88 +47,29 @@ def evaluate_policy_on_env(
     optimal_steps: int = 0,
 ) -> EvaluationResult:
     """Evaluate a generated policy on one environment without model calls."""
-    try:
-        adapter.create()
-        observation = adapter.reset(seed=None)
-    except Exception:
-        return EvaluationResult(
-            env_id=adapter.env_id,
-            solved=False,
-            reward=0.0,
-            legal_action_count=0,
-            steps_used=0,
-            optimal_steps=optimal_steps or adapter.max_steps,
-            illegal_action_reason=None,
-            latency=0.0,
-            execution_failure=True,
-        )
     start = time.monotonic()
-    legal_actions = 0
-    steps_used = 0
-    illegal_reason: str | None = None
-    solved = False
-    reward = 0.0
+    rollout = RolloutEvaluator(adapter=adapter, executor=executor).evaluate(source=source)
+    latency = time.monotonic() - start
+    execution_failure = rollout.termination_reason in (
+        TerminationReason.EXECUTION_FAILURE,
+        TerminationReason.CONTRACT_FAILURE,
+    )
+    illegal_action_reason: str | None = None
+    if rollout.termination_reason == TerminationReason.ILLEGAL_ACTION:
+        illegal_action_reason = rollout.failure_summary or "Illegal action"
+    elif rollout.termination_reason == TerminationReason.STEP_LIMIT:
+        illegal_action_reason = "step_limit"
 
-    for _ in range(adapter.max_steps):
-        exec_result = executor.execute(source, observation)
-        steps_used += 1
-        if not exec_result.success:
-            end = time.monotonic()
-            return EvaluationResult(
-                env_id=adapter.env_id,
-                solved=False,
-                reward=0.0,
-                legal_action_count=legal_actions,
-                steps_used=steps_used,
-                optimal_steps=optimal_steps or adapter.max_steps,
-                illegal_action_reason=None,
-                latency=end - start,
-                execution_failure=True,
-            )
-        action = exec_result.output or ""
-        step_result = adapter.step(action)
-        if not step_result.is_legal:
-            end = time.monotonic()
-            return EvaluationResult(
-                env_id=adapter.env_id,
-                solved=False,
-                reward=0.0,
-                legal_action_count=legal_actions,
-                steps_used=steps_used,
-                optimal_steps=optimal_steps or adapter.max_steps,
-                illegal_action_reason=(step_result.feedback or "Illegal action"),
-                latency=end - start,
-                execution_failure=False,
-            )
-        observation = step_result.observation
-        legal_actions += 1
-        if step_result.terminated:
-            end = time.monotonic()
-            solved = step_result.reward >= 1.0
-            reward = step_result.reward
-            return EvaluationResult(
-                env_id=adapter.env_id,
-                solved=solved,
-                reward=reward,
-                legal_action_count=legal_actions,
-                steps_used=steps_used,
-                optimal_steps=optimal_steps or adapter.max_steps,
-                illegal_action_reason=illegal_reason,
-                latency=end - start,
-                execution_failure=False,
-            )
-
-    end = time.monotonic()
     return EvaluationResult(
         env_id=adapter.env_id,
-        solved=False,
-        reward=0.0,
-        legal_action_count=legal_actions,
-        steps_used=steps_used,
+        solved=rollout.terminal_reward >= 1.0,
+        reward=rollout.terminal_reward,
+        legal_action_count=rollout.legal_action_count,
+        steps_used=len(rollout.steps),
         optimal_steps=optimal_steps or adapter.max_steps,
-        illegal_action_reason="step_limit",
-        latency=end - start,
-        execution_failure=False,
+        illegal_action_reason=illegal_action_reason,
+        latency=latency,
+        execution_failure=execution_failure,
     )
 
 

@@ -23,6 +23,7 @@ class FakeAdapter:
     _step_results: list[StepResult] | None = None
     _step_index: int = -1
     _observation: str = ""
+    _truncation_reward: float = 0.0
 
     def create(self) -> None:
         pass
@@ -47,6 +48,9 @@ class FakeAdapter:
             terminated=False,
             feedback="",
         )
+
+    def truncation_reward(self) -> float:
+        return self._truncation_reward
 
 
 @dataclass
@@ -170,6 +174,25 @@ def test_evaluate_policy_no_model_calls() -> None:
         source="policy source",
     )
     assert isinstance(result, EvaluationResult)
+
+
+def test_evaluate_policy_on_env_preserves_truncation_reward() -> None:
+    """Generated policy evaluation uses canonical rollout reward at the step limit."""
+    adapter = FakeAdapter(max_steps=2, _truncation_reward=0.6)
+    executor = FakeExecutor(responses=["[A C]", "[C B]"])
+
+    result = evaluate_policy_on_env(
+        adapter=adapter,
+        executor=executor,
+        source="policy source",
+    )
+
+    assert not result.solved
+    assert result.reward == 0.6
+    assert result.steps_used == 2
+    assert result.legal_action_count == 2
+    assert result.illegal_action_reason == "step_limit"
+    assert not result.execution_failure
 
 
 def test_evaluation_result_attributes() -> None:

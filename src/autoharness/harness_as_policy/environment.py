@@ -35,3 +35,6 @@ class EnvironmentAdapter(Protocol):
 
     def step(self, action: str) -> StepResult:
         """Submit an action and return the normalized step result."""
+
+    def truncation_reward(self) -> float:
+        """Return the environment reward for the current state at rollout truncation."""

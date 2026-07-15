@@ -135,3 +135,9 @@ class TowerOfHanoiAdapter:
             terminated=False,
             feedback="",
         )
+
+    def truncation_reward(self) -> float:
+        """Return TextArena's percentage completion for the current board."""
+        if self._inner_env is None or self._state is None:
+            raise RuntimeError("Call create() and reset() before requesting truncation reward.")
+        return float(self._inner_env._get_percentage_completion())

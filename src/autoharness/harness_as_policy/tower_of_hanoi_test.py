@@ -150,3 +150,16 @@ def test_reset_before_create_raises() -> None:
     adapter = TowerOfHanoiAdapter(difficulty="v0")
     with pytest.raises(RuntimeError):
         adapter.reset(seed=42)
+
+
+def test_truncation_reward_reflects_current_partial_completion() -> None:
+    """Truncation reward reports TextArena's completion fraction without another action."""
+    adapter = TowerOfHanoiAdapter(difficulty="v0")
+    adapter.create()
+    adapter.reset(seed=42)
+    for action in ("[A C]", "[A B]", "[C B]", "[A C]"):
+        result = adapter.step(action)
+        assert result.is_legal
+        assert not result.terminated
+
+    assert adapter.truncation_reward() == pytest.approx(1 / 3)

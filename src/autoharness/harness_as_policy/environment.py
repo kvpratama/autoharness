@@ -34,7 +34,8 @@ class EnvironmentAdapter(Protocol):
         """Reset the environment and return the initial observation."""
 
     def step(self, action: str) -> StepResult:
-        """Submit an action and return the normalized step result."""
+        """Submit an action and return the normalized step result.
 
-    def truncation_reward(self) -> float:
-        """Return the environment reward for the current state at rollout truncation."""
+        Legal non-terminal steps should report current progress on ``reward`` so
+        truncation can use the last step's reward without a second env query.
+        """

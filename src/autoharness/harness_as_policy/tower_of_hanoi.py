@@ -38,6 +38,7 @@ class TowerOfHanoiAdapter:
         self._env: ta.Env | None = None
         self._state: Any = None
         self._inner_env: Any = None
+        self._num_disks: int | None = None
         self._observation: str = ""
 
     @property
@@ -67,6 +68,7 @@ class TowerOfHanoiAdapter:
         while hasattr(e, "env"):
             e = e.env
         self._inner_env = e
+        self._num_disks = int(e.num_disks)
         self._state = None
 
     def reset(self, seed: int | None = None) -> str:
@@ -131,13 +133,24 @@ class TowerOfHanoiAdapter:
             observation=self._observation,
             action=action,
             is_legal=True,
-            reward=0.0,
+            reward=self._completion_fraction(),
             terminated=False,
             feedback="",
         )
 
-    def truncation_reward(self) -> float:
-        """Return TextArena's percentage completion for the current board."""
-        if self._inner_env is None or self._state is None:
-            raise RuntimeError("Call create() and reset() before requesting truncation reward.")
-        return float(self._inner_env._get_percentage_completion())
+    def _completion_fraction(self) -> float:
+        """Fraction of disks correctly stacked from the base on peg C.
+
+        Mirrors TextArena's completion metric without calling private APIs.
+        """
+        if self._state is None or self._num_disks is None:
+            raise RuntimeError("Call create() and reset() before reading board progress.")
+        goal = list(range(self._num_disks, 0, -1))
+        tower_c = self._state.game_state["towers"]["C"]
+        correct = 0
+        for placed, expected in zip(tower_c, goal, strict=False):
+            if placed == expected:
+                correct += 1
+            else:
+                break
+        return correct / self._num_disks

@@ -17,6 +17,7 @@ from autoharness.harness_as_policy.evaluation import (
     format_evaluation_summary,
 )
 from autoharness.harness_as_policy.live_policy import LivePolicy
+from autoharness.harness_as_policy.models import TerminationReason
 from autoharness.harness_as_policy.refiner import Refiner
 from autoharness.harness_as_policy.search import synthesize
 from autoharness.harness_as_policy.tower_of_hanoi import (
@@ -213,7 +214,10 @@ def evaluate_cmd(run_dir: Path) -> list[Any] | None:
                     "legal_action_count": r.legal_action_count,
                     "steps_used": r.steps_used,
                     "optimal_steps": r.optimal_steps,
-                    "illegal_action_reason": r.illegal_action_reason,
+                    "termination_reason": (
+                        r.termination_reason.value if r.termination_reason is not None else None
+                    ),
+                    "failure_summary": r.failure_summary,
                     "latency": r.latency,
                     "execution_failure": r.execution_failure,
                 }
@@ -254,7 +258,7 @@ def evaluate_baseline_cmd(
         try:
             adapter.create()
             adapter.reset()
-        except Exception:
+        except Exception as e:
             results.append(
                 EvaluationResult(
                     env_id=env_id,
@@ -263,7 +267,8 @@ def evaluate_baseline_cmd(
                     legal_action_count=0,
                     steps_used=0,
                     optimal_steps=optimal,
-                    illegal_action_reason=None,
+                    termination_reason=TerminationReason.EXECUTION_FAILURE,
+                    failure_summary=f"Environment setup failed: {e}",
                     latency=0.0,
                     execution_failure=True,
                 )
@@ -274,7 +279,6 @@ def evaluate_baseline_cmd(
         solved = False
         reward = 0.0
         steps_used = 0
-        illegal_reason: str | None = None
         observation = adapter._observation if hasattr(adapter, "_observation") else ""
         for _ in range(adapter.max_steps):
             steps_used += 1
@@ -298,7 +302,8 @@ def evaluate_baseline_cmd(
                         legal_action_count=legal_actions,
                         steps_used=steps_used,
                         optimal_steps=optimal,
-                        illegal_action_reason=(action_result.error_details or "model_error"),
+                        termination_reason=TerminationReason.EXECUTION_FAILURE,
+                        failure_summary=(action_result.error_details or "model_error"),
                         latency=time.monotonic() - start,
                         execution_failure=True,
                     )
@@ -306,7 +311,6 @@ def evaluate_baseline_cmd(
                 break
             step_result = adapter.step(action_result.action)
             if not step_result.is_legal:
-                illegal_reason = step_result.feedback or "Illegal"
                 results.append(
                     EvaluationResult(
                         env_id=env_id,
@@ -315,7 +319,8 @@ def evaluate_baseline_cmd(
                         legal_action_count=legal_actions,
                         steps_used=steps_used,
                         optimal_steps=optimal,
-                        illegal_action_reason=illegal_reason,
+                        termination_reason=TerminationReason.ILLEGAL_ACTION,
+                        failure_summary=step_result.feedback or "Illegal",
                         latency=time.monotonic() - start,
                         execution_failure=False,
                     )
@@ -333,7 +338,8 @@ def evaluate_baseline_cmd(
                         legal_action_count=legal_actions,
                         steps_used=steps_used,
                         optimal_steps=optimal,
-                        illegal_action_reason=None,
+                        termination_reason=TerminationReason.ENVIRONMENT_TERMINATION,
+                        failure_summary=None,
                         latency=time.monotonic() - start,
                         execution_failure=False,
                     )
@@ -349,7 +355,8 @@ def evaluate_baseline_cmd(
                     legal_action_count=legal_actions,
                     steps_used=steps_used,
                     optimal_steps=optimal,
-                    illegal_action_reason="step_limit",
+                    termination_reason=TerminationReason.STEP_LIMIT,
+                    failure_summary=None,
                     latency=time.monotonic() - start,
                     execution_failure=False,
                 )
@@ -377,7 +384,10 @@ def evaluate_baseline_cmd(
                     "legal_action_count": r.legal_action_count,
                     "steps_used": r.steps_used,
                     "optimal_steps": r.optimal_steps,
-                    "illegal_action_reason": r.illegal_action_reason,
+                    "termination_reason": (
+                        r.termination_reason.value if r.termination_reason is not None else None
+                    ),
+                    "failure_summary": r.failure_summary,
                     "latency": r.latency,
                     "execution_failure": r.execution_failure,
                 }

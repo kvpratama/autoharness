@@ -9,7 +9,8 @@ from autoharness.harness_as_policy.evaluation import (
     evaluate_policy_on_env,
     format_evaluation_summary,
 )
-from autoharness.harness_as_policy.models import StepResult
+from autoharness.harness_as_policy.executor import ExecutionResult
+from autoharness.harness_as_policy.models import StepResult, TerminationReason
 
 
 @dataclass
@@ -23,7 +24,6 @@ class FakeAdapter:
     _step_results: list[StepResult] | None = None
     _step_index: int = -1
     _observation: str = ""
-    _truncation_reward: float = 0.0
 
     def create(self) -> None:
         pass
@@ -49,37 +49,32 @@ class FakeAdapter:
             feedback="",
         )
 
-    def truncation_reward(self) -> float:
-        return self._truncation_reward
-
 
 @dataclass
 class FakeExecutor:
     """Fake executor for evaluation tests."""
 
-    responses: list[str] | None = None
+    responses: list[str | None] | None = None
     _call_index: int = -1
 
-    def execute(self, source: str, observation: str) -> FakeResult:
+    def execute(self, source: str, observation: str) -> ExecutionResult:
         self._call_index += 1
         if self.responses and self._call_index < len(self.responses):
-            return FakeResult(
+            response = self.responses[self._call_index]
+            if response is None:
+                return ExecutionResult(
+                    success=False,
+                    output=None,
+                    latency=0.01,
+                    failure_type="execution_failure",
+                    error_details="boom",
+                )
+            return ExecutionResult(
                 success=True,
-                output=self.responses[self._call_index],
+                output=response,
                 latency=0.01,
             )
-        return FakeResult(success=True, output="[A C]", latency=0.01)
-
-
-@dataclass
-class FakeResult:
-    """Fake execution result for evaluation tests."""
-
-    success: bool
-    output: str | None
-    latency: float
-    failure_type: str | None = None
-    error_details: str | None = None
+        return ExecutionResult(success=True, output="[A C]", latency=0.01)
 
 
 def test_evaluate_policy_on_env_solved() -> None:
@@ -120,7 +115,8 @@ def test_evaluate_policy_on_env_solved() -> None:
     assert result.solved
     assert result.reward == 1.0
     assert result.steps_used == 3
-    assert result.illegal_action_reason is None
+    assert result.termination_reason == TerminationReason.ENVIRONMENT_TERMINATION
+    assert result.failure_summary is None
 
 
 def test_evaluate_policy_on_env_illegal() -> None:
@@ -151,7 +147,8 @@ def test_evaluate_policy_on_env_illegal() -> None:
         source="policy source",
     )
     assert not result.solved
-    assert result.illegal_action_reason is not None
+    assert result.termination_reason == TerminationReason.ILLEGAL_ACTION
+    assert result.failure_summary is not None
 
 
 def test_evaluate_policy_no_model_calls() -> None:
@@ -176,9 +173,29 @@ def test_evaluate_policy_no_model_calls() -> None:
     assert isinstance(result, EvaluationResult)
 
 
-def test_evaluate_policy_on_env_preserves_truncation_reward() -> None:
-    """Generated policy evaluation uses canonical rollout reward at the step limit."""
-    adapter = FakeAdapter(max_steps=2, _truncation_reward=0.6)
+def test_evaluate_policy_on_env_preserves_step_progress_reward() -> None:
+    """Generated policy evaluation uses last-step reward at the step limit."""
+    adapter = FakeAdapter(
+        max_steps=2,
+        _step_results=[
+            StepResult(
+                observation="o1",
+                action="[A C]",
+                is_legal=True,
+                reward=0.0,
+                terminated=False,
+                feedback="",
+            ),
+            StepResult(
+                observation="o2",
+                action="[C B]",
+                is_legal=True,
+                reward=0.6,
+                terminated=False,
+                feedback="",
+            ),
+        ],
+    )
     executor = FakeExecutor(responses=["[A C]", "[C B]"])
 
     result = evaluate_policy_on_env(
@@ -191,8 +208,39 @@ def test_evaluate_policy_on_env_preserves_truncation_reward() -> None:
     assert result.reward == 0.6
     assert result.steps_used == 2
     assert result.legal_action_count == 2
-    assert result.illegal_action_reason == "step_limit"
+    assert result.termination_reason == TerminationReason.STEP_LIMIT
+    assert result.failure_summary is None
     assert not result.execution_failure
+
+
+def test_evaluate_policy_on_env_execution_failure_counts_env_steps_only() -> None:
+    """steps_used counts applied env transitions, not failed executor attempts."""
+    adapter = FakeAdapter(
+        max_steps=5,
+        _step_results=[
+            StepResult(
+                observation="o1",
+                action="[A C]",
+                is_legal=True,
+                reward=0.0,
+                terminated=False,
+                feedback="",
+            ),
+        ],
+    )
+    executor = FakeExecutor(responses=["[A C]", None])
+
+    result = evaluate_policy_on_env(
+        adapter=adapter,
+        executor=executor,
+        source="policy source",
+    )
+
+    assert result.execution_failure
+    assert result.termination_reason == TerminationReason.EXECUTION_FAILURE
+    assert result.steps_used == 1
+    assert result.legal_action_count == 1
+    assert result.failure_summary == "boom"
 
 
 def test_evaluation_result_attributes() -> None:
@@ -204,7 +252,8 @@ def test_evaluation_result_attributes() -> None:
         legal_action_count=5,
         steps_used=5,
         optimal_steps=15,
-        illegal_action_reason="malformed action",
+        termination_reason=TerminationReason.ILLEGAL_ACTION,
+        failure_summary="malformed action",
         latency=0.05,
         execution_failure=False,
     )
@@ -223,7 +272,8 @@ def test_format_evaluation_summary() -> None:
             legal_action_count=7,
             steps_used=7,
             optimal_steps=7,
-            illegal_action_reason=None,
+            termination_reason=TerminationReason.ENVIRONMENT_TERMINATION,
+            failure_summary=None,
             latency=0.05,
             execution_failure=False,
         ),
@@ -234,7 +284,8 @@ def test_format_evaluation_summary() -> None:
             legal_action_count=10,
             steps_used=10,
             optimal_steps=15,
-            illegal_action_reason="step_limit",
+            termination_reason=TerminationReason.STEP_LIMIT,
+            failure_summary=None,
             latency=0.08,
             execution_failure=False,
         ),
@@ -242,4 +293,5 @@ def test_format_evaluation_summary() -> None:
     summary = format_evaluation_summary(results)
     assert "v0" in summary
     assert "medium" in summary
+    assert "step_limit" in summary
     assert len(summary) > 0

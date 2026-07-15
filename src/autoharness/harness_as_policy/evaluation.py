@@ -22,7 +22,8 @@ class EvaluationResult:
     legal_action_count: int
     steps_used: int
     optimal_steps: int
-    illegal_action_reason: str | None
+    termination_reason: TerminationReason | None
+    failure_summary: str | None
     latency: float
     execution_failure: bool
 
@@ -46,7 +47,11 @@ def evaluate_policy_on_env(
     source: str,
     optimal_steps: int = 0,
 ) -> EvaluationResult:
-    """Evaluate a generated policy on one environment without model calls."""
+    """Evaluate a generated policy on one environment without model calls.
+
+    ``steps_used`` is the number of environment transitions applied (length of
+    the rollout step list), not the number of executor attempts.
+    """
     start = time.monotonic()
     rollout = RolloutEvaluator(adapter=adapter, executor=executor).evaluate(source=source)
     latency = time.monotonic() - start
@@ -54,12 +59,6 @@ def evaluate_policy_on_env(
         TerminationReason.EXECUTION_FAILURE,
         TerminationReason.CONTRACT_FAILURE,
     )
-    illegal_action_reason: str | None = None
-    if rollout.termination_reason == TerminationReason.ILLEGAL_ACTION:
-        illegal_action_reason = rollout.failure_summary or "Illegal action"
-    elif rollout.termination_reason == TerminationReason.STEP_LIMIT:
-        illegal_action_reason = "step_limit"
-
     return EvaluationResult(
         env_id=adapter.env_id,
         solved=rollout.terminal_reward >= 1.0,
@@ -67,7 +66,8 @@ def evaluate_policy_on_env(
         legal_action_count=rollout.legal_action_count,
         steps_used=len(rollout.steps),
         optimal_steps=optimal_steps or adapter.max_steps,
-        illegal_action_reason=illegal_action_reason,
+        termination_reason=rollout.termination_reason,
+        failure_summary=rollout.failure_summary,
         latency=latency,
         execution_failure=execution_failure,
     )
@@ -112,8 +112,10 @@ def format_evaluation_summary(
         lines.append(f"    Reward: {r.reward}")
         lines.append(f"    Steps: {r.steps_used}/{r.optimal_steps}")
         lines.append(f"    Legal actions: {r.legal_action_count}")
-        if r.illegal_action_reason:
-            lines.append(f"    Illegal reason: {r.illegal_action_reason}")
+        if r.termination_reason is not None:
+            lines.append(f"    Termination: {r.termination_reason}")
+        if r.failure_summary:
+            lines.append(f"    Failure: {r.failure_summary}")
         if r.execution_failure:
             lines.append("    Execution failure: yes")
         lines.append(f"    Latency: {r.latency:.3f}s")

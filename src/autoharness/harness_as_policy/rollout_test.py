@@ -48,18 +48,13 @@ class FakeExecutor:
 class FakeAdapter:
     """Fake adapter that follows a scripted sequence of step results."""
 
-    def __init__(
-        self,
-        step_results: list[StepResult] | None = None,
-        truncation_reward: float = 0.0,
-    ) -> None:
+    def __init__(self, step_results: list[StepResult] | None = None) -> None:
         self.env_id = "FakeEnv-v0"
         self.rules = "Fake rules"
         self.action_format = "[X Y]"
         self.max_steps = 10
         self._step_results = step_results or []
         self._step_index = -1
-        self._truncation_reward = truncation_reward
 
     def create(self) -> None:
         pass
@@ -80,9 +75,6 @@ class FakeAdapter:
             terminated=False,
             feedback="",
         )
-
-    def truncation_reward(self) -> float:
-        return self._truncation_reward
 
 
 def test_rollout_solves_environment() -> None:
@@ -152,7 +144,7 @@ def test_rollout_illegal_action_returns_zero() -> None:
 
 
 def test_rollout_step_limit() -> None:
-    """Reaching adapter step limit without termination yields heuristic 0.5."""
+    """Reaching adapter step limit uses last-step progress reward for heuristic."""
     adapter = FakeAdapter(
         step_results=[
             StepResult(
@@ -175,12 +167,11 @@ def test_rollout_step_limit() -> None:
                 observation="obs3",
                 action="[A C]",
                 is_legal=True,
-                reward=0.0,
+                reward=0.6,
                 terminated=False,
                 feedback="",
             ),
         ],
-        truncation_reward=0.6,
     )
     adapter.max_steps = 3
     executor = FakeExecutor(step_results=["[A C]", "[C B]", "[A C]"])

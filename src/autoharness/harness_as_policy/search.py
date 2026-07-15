@@ -45,7 +45,14 @@ def select_candidate(
     candidates: dict[str, Candidate],
     rng: random.Random,
 ) -> str | None:
-    """Select a candidate using Thompson sampling (largest draw)."""
+    """
+    Candidate selection uses Thompson sampling:
+    for each candidate, draw a random score from a Beta distribution shaped
+    by its performance and how many times it has been expanded (direct children).
+    Higher performance tends to produce higher draws; more expansions tend to produce lower draws.
+    The candidate with the highest draw is selected. This balances exploiting strong candidates
+    with exploring less-used ones, so a high performer is favored but not endlessly re-expanded.
+    """
     if not candidates:
         return None
     best_id: str | None = None
@@ -125,6 +132,7 @@ def synthesize(
 
     try:
         adapter.create()
+        # `seed` controls Thompson sampling only; this reset is an environment preflight.
         adapter.reset(seed=None)
     except Exception as e:
         raise RuntimeError(f"Environment preflight failed — cannot start synthesis: {e}") from e
@@ -236,6 +244,11 @@ def synthesize(
         if parent.last_observation:
             feedback.append(f"Last observation before termination: {parent.last_observation}")
 
+        logger.info(
+            "Refining parent %s (iteration=%d)",
+            parent_id,
+            iteration,
+        )
         refine_result = refiner.refine(
             env_name=adapter.env_id,
             rules=adapter.rules,

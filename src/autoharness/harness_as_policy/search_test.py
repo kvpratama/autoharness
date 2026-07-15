@@ -12,6 +12,7 @@ from autoharness.harness_as_policy.models import (
     StepResult,
     TerminationReason,
 )
+from autoharness.harness_as_policy.refiner import RefinerProtocol, RefinerResult
 from autoharness.harness_as_policy.search import (
     beta_parameters,
     find_best_candidate,
@@ -189,10 +190,11 @@ def test_should_stop_not_yet() -> None:
 def test_synthesize_empty_policies() -> None:
     """synthesize with only root and one failed refinement returns summary."""
     with tempfile.TemporaryDirectory() as tmpdir:
+        refiner: RefinerProtocol = FakeRefiner(responses=[""])
         result = synthesize(
             adapter=FakeAdapter(),
             profile=Profile.SMOKE,
-            refiner=FakeRefiner(responses=[""]),
+            refiner=refiner,
             artifact_root=Path(tmpdir),
             seed=42,
         )
@@ -243,19 +245,21 @@ class FakeRefiner:
     def logical_refinement_count(self) -> int:
         return self._call_count
 
-    def refine(self, **kwargs) -> RefinerResult:
+    def refine(
+        self,
+        rules: str = "",
+        action_format: str = "",
+        parent_source: str = "",
+        parent_heuristic: float = 0.0,
+        parent_reward: float = 0.0,
+        parent_legal_actions: int = 0,
+        parent_status: str = "",
+        feedback: list[str] | None = None,
+        env_name: str = "",
+    ) -> RefinerResult:
         self._call_count += 1
         if self._responses:
             resp = self._responses.pop(0)
             if resp:
                 return RefinerResult(success=True, source=resp)
         return RefinerResult(success=False, source=None)
-
-
-class RefinerResult:
-    """Fake refiner result."""
-
-    def __init__(self, success: bool, source: str | None) -> None:
-        self.success = success
-        self.source = source
-        self.error_details: str | None = None

@@ -20,6 +20,7 @@ from autoharness.harness_as_policy.models import (
     RolloutResult,
     TerminationReason,
 )
+from autoharness.harness_as_policy.refiner import RefinerProtocol
 from autoharness.harness_as_policy.rollout import RolloutEvaluator
 
 logger = logging.getLogger(__name__)
@@ -99,7 +100,7 @@ ROOT_SOURCE = """def propose_action(observation: str) -> str:
 def synthesize(
     adapter: EnvironmentAdapter,
     profile: Profile,
-    refiner: Any,
+    refiner: RefinerProtocol,
     artifact_root: Path,
     seed: int = 42,
     refinements: int | None = None,

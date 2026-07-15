@@ -8,6 +8,7 @@ from langchain_core.outputs import ChatGeneration, ChatResult
 
 from autoharness.harness_as_policy.refiner import (
     Refiner,
+    RefinerProtocol,
     build_refiner_prompt,
 )
 
@@ -291,3 +292,12 @@ def test_refiner_content_blocks_empty_list() -> None:
         feedback=[""],
     )
     assert not result.success
+
+
+def test_refiner_conforms_to_protocol() -> None:
+    """Refiner satisfies RefinerProtocol structurally."""
+    resp = "def propose_action(observation: str) -> str:\n    return '[A C]'"
+    model = FakeChatModel(responses=[resp])
+    refiner: RefinerProtocol = Refiner(model=model)
+    assert refiner.model_call_count == 0
+    assert refiner.logical_refinement_count == 0

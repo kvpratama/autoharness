@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
+from typing import Protocol
 
 from langchain.chat_models import init_chat_model
 from langchain_core.language_models import BaseChatModel
@@ -143,6 +144,32 @@ def _normalize_content(response) -> str:
         if parts:
             return "\n".join(parts)
     return str(raw)
+
+
+class RefinerProtocol(Protocol):
+    """Structural protocol for a policy refiner.
+
+    Any refiner implementation must expose these members so the
+    synthesis loop can call refine() and track usage statistics
+    without depending on a concrete class.
+    """
+
+    @property
+    def model_call_count(self) -> int: ...
+    @property
+    def logical_refinement_count(self) -> int: ...
+    def refine(
+        self,
+        rules: str,
+        action_format: str,
+        parent_source: str,
+        parent_heuristic: float,
+        parent_reward: float,
+        parent_legal_actions: int,
+        parent_status: str,
+        feedback: list[str],
+        env_name: str = "",
+    ) -> RefinerResult: ...
 
 
 class Refiner:

@@ -230,8 +230,8 @@ def test_evaluate_baseline_cmd_maps_each_exit_to_structured_termination_data(
             patch("autoharness.cli.TowerOfHanoiAdapter", return_value=adapter),
             patch("autoharness.cli.LivePolicy", return_value=live_policy),
             patch(
-                "autoharness.harness_as_policy.evaluation.DIFFICULTIES",
-                [("v0", "Fake-v0", 1, 1)],
+                "autoharness.harness_as_policy.tower_of_hanoi.DIFFICULTY_MAP",
+                {"v0": ("Fake-v0", 1, 1)},
             ),
         ):
             results = evaluate_baseline_cmd(run_dir=run_dir, model_id="fake:model")

@@ -9,11 +9,11 @@ import textarena as ta
 
 from autoharness.harness_as_policy.models import StepResult
 
-DIFFICULTY_MAP: dict[str, tuple[str, int]] = {
-    "v0": ("TowerOfHanoi-v0", 14),
-    "medium": ("TowerOfHanoi-v0-medium", 30),
-    "hard": ("TowerOfHanoi-v0-hard", 62),
-    "hardcore": ("TowerOfHanoi-v0-hardcore", 126),
+DIFFICULTY_MAP: dict[str, tuple[str, int, int]] = {
+    "v0": ("TowerOfHanoi-v0", 14, 7),
+    "medium": ("TowerOfHanoi-v0-medium", 30, 15),
+    "hard": ("TowerOfHanoi-v0-hard", 62, 31),
+    "hardcore": ("TowerOfHanoi-v0-hardcore", 126, 63),
 }
 
 BRACKETED_MOVE_RE = re.compile(r"\s*\[([ABC])\s*,?\s*([ABC])\]\s*", re.IGNORECASE)
@@ -34,7 +34,7 @@ class TowerOfHanoiAdapter:
                 f"Unknown difficulty: {difficulty}. Choose from {list(DIFFICULTY_MAP)}"
             )
         self._difficulty = difficulty
-        self._env_id, self._max_steps = DIFFICULTY_MAP[difficulty]
+        self._env_id, self._max_steps, _ = DIFFICULTY_MAP[difficulty]
         self._env: ta.Env | None = None
         self._state: Any = None
         self._inner_env: Any = None

@@ -9,7 +9,7 @@ from autoharness.harness_as_policy.environment import EnvironmentAdapter
 from autoharness.harness_as_policy.executor import PolicyExecutor
 from autoharness.harness_as_policy.models import TerminationReason
 from autoharness.harness_as_policy.rollout import ExecutorProtocol, RolloutEvaluator
-from autoharness.harness_as_policy.tower_of_hanoi import TowerOfHanoiAdapter
+from autoharness.harness_as_policy.tower_of_hanoi import DIFFICULTY_MAP, TowerOfHanoiAdapter
 
 
 @dataclass
@@ -26,19 +26,6 @@ class EvaluationResult:
     failure_summary: str | None
     latency: float
     execution_failure: bool
-
-
-DIFFICULTIES = [
-    ("v0", "TowerOfHanoi-v0", 14, 7),
-    ("medium", "TowerOfHanoi-v0-medium", 30, 15),
-    ("hard", "TowerOfHanoi-v0-hard", 62, 31),
-    ("hardcore", "TowerOfHanoi-v0-hardcore", 126, 63),
-]
-
-
-def _optimal_steps(disks: int) -> int:
-    """Optimal number of moves to solve n-disk Tower of Hanoi (2^n - 1)."""
-    return (2**disks) - 1  # 3 disks -> 7, 4 -> 15, etc.
 
 
 def evaluate_policy_on_env(
@@ -75,17 +62,18 @@ def evaluate_policy_on_env(
 
 def evaluate_policy(
     source: str,
-    difficulties: list[tuple[str, str, int, int]] | None = None,
+    difficulties: list[str] | None = None,
 ) -> list[EvaluationResult]:
     """Evaluate a generated policy across all difficulty variants.
 
     Zero model calls — uses PolicyExecutor directly.
     """
     if difficulties is None:
-        difficulties = DIFFICULTIES
+        difficulties = list(DIFFICULTY_MAP)
     results: list[EvaluationResult] = []
     executor = PolicyExecutor()
-    for diff_key, _env_id, _max_steps_var, optimal in difficulties:
+    for diff_key in difficulties:
+        _env_id, _max_steps, optimal = DIFFICULTY_MAP[diff_key]
         adapter = TowerOfHanoiAdapter(difficulty=diff_key)
         result = evaluate_policy_on_env(
             adapter=adapter,

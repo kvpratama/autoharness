@@ -132,7 +132,9 @@ def _build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-_ENV_TO_DIFFICULTY: dict[str, str] = {env_id: diff for diff, (env_id, _) in DIFFICULTY_MAP.items()}
+_ENV_TO_DIFFICULTY: dict[str, str] = {
+    env_id: diff for diff, (env_id, _, _) in DIFFICULTY_MAP.items()
+}
 
 
 def synthesize_cmd(
@@ -237,10 +239,8 @@ def evaluate_baseline_cmd(
     """Run the live-LLM baseline evaluate command."""
     import time
 
-    from autoharness.harness_as_policy.evaluation import (
-        DIFFICULTIES,
-        EvaluationResult,
-    )
+    from autoharness.harness_as_policy.evaluation import EvaluationResult
+    from autoharness.harness_as_policy.tower_of_hanoi import DIFFICULTY_MAP
 
     results: list[EvaluationResult] = []
     total_model_calls = 0
@@ -248,7 +248,7 @@ def evaluate_baseline_cmd(
     total_output_tokens = 0
     total_estimated_cost = 0.0
 
-    for diff_key, env_id, _max_steps, optimal in DIFFICULTIES:
+    for diff_key, (env_id, _max_steps, optimal) in DIFFICULTY_MAP.items():
         adapter = TowerOfHanoiAdapter(difficulty=diff_key)
         live_policy = LivePolicy(
             model_id=model_id,

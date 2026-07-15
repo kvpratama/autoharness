@@ -126,10 +126,10 @@ def test_random_string_illegal() -> None:
 
 def test_difficulty_map_correct() -> None:
     """DIFFICULTY_MAP has all four variants with correct turn limits."""
-    assert DIFFICULTY_MAP["v0"] == ("TowerOfHanoi-v0", 14)
-    assert DIFFICULTY_MAP["medium"] == ("TowerOfHanoi-v0-medium", 30)
-    assert DIFFICULTY_MAP["hard"] == ("TowerOfHanoi-v0-hard", 62)
-    assert DIFFICULTY_MAP["hardcore"] == ("TowerOfHanoi-v0-hardcore", 126)
+    assert DIFFICULTY_MAP["v0"] == ("TowerOfHanoi-v0", 14, 7)
+    assert DIFFICULTY_MAP["medium"] == ("TowerOfHanoi-v0-medium", 30, 15)
+    assert DIFFICULTY_MAP["hard"] == ("TowerOfHanoi-v0-hard", 62, 31)
+    assert DIFFICULTY_MAP["hardcore"] == ("TowerOfHanoi-v0-hardcore", 126, 63)
 
 
 def test_invalid_difficulty_raises() -> None:

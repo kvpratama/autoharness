@@ -75,7 +75,10 @@ def test_candidate_rank_key_from_candidate_solved() -> None:
     cand = Candidate(
         id="003",
         parent_id="001",
-        source="def propose_action(observation: str) -> str: ...",
+        source=(
+            "def propose_action(board: str) -> str: ...\n"
+            "def is_legal_action(board: str, action: str) -> bool: ..."
+        ),
         heuristic=1.0,
         terminal_reward=1.0,
         legal_action_count=7,
@@ -162,9 +165,11 @@ def test_termination_reason_values() -> None:
     """TerminationReason has all expected members."""
     reasons = {
         TerminationReason.ILLEGAL_ACTION,
+        TerminationReason.POLICY_REJECTED_ACTION,
+        TerminationReason.LEGALITY_DISAGREEMENT,
         TerminationReason.ENVIRONMENT_TERMINATION,
         TerminationReason.STEP_LIMIT,
         TerminationReason.EXECUTION_FAILURE,
         TerminationReason.CONTRACT_FAILURE,
     }
-    assert len(reasons) == 5
+    assert len(reasons) == 7

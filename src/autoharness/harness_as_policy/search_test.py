@@ -207,11 +207,13 @@ def test_synthesize_empty_policies() -> None:
 class FakeAdapter:
     """Fake environment adapter for testing synthesis."""
 
-    def __init__(self) -> None:
+    def __init__(self, *, reject_actions: bool = False) -> None:
         self.env_id = "FakeEnv-v0"
         self.rules = "Fake rules"
         self.action_format = "[X Y]"
         self.max_steps = 10
+        self.reject_actions = reject_actions
+        self.step_calls: list[str] = []
 
     def create(self) -> None:
         pass
@@ -220,10 +222,11 @@ class FakeAdapter:
         return "initial observation"
 
     def step(self, action: str) -> StepResult:
+        self.step_calls.append(action)
         return StepResult(
             observation="next observation",
             action=action,
-            is_legal=True,
+            is_legal=not self.reject_actions,
             reward=0.0,
             terminated=False,
             feedback="",
@@ -236,6 +239,8 @@ class FakeRefiner:
     def __init__(self, responses: list[str | None]) -> None:
         self._responses = responses
         self._call_count = 0
+        self.scopes: list[bool] = []
+        self.feedback: list[list[str]] = []
 
     @property
     def model_call_count(self) -> int:
@@ -256,10 +261,75 @@ class FakeRefiner:
         parent_status: str = "",
         feedback: list[str] | None = None,
         env_name: str = "",
+        *,
+        refine_legal_action: bool,
     ) -> RefinerResult:
         self._call_count += 1
+        self.scopes.append(refine_legal_action)
+        self.feedback.append(feedback or [])
         if self._responses:
             resp = self._responses.pop(0)
             if resp:
                 return RefinerResult(success=True, source=resp)
         return RefinerResult(success=False, source=None)
+
+
+REJECTED_BY_CHECKER_SOURCE = """def propose_action(board: str) -> str:
+    return '[X Y]'
+
+def is_legal_action(board: str, action: str) -> bool:
+    return False
+"""
+
+ACCEPTED_BY_CHECKER_SOURCE = """def propose_action(board: str) -> str:
+    return '[X Y]'
+
+def is_legal_action(board: str, action: str) -> bool:
+    return True
+"""
+
+
+def test_synthesize_refines_only_action_after_checker_rejection() -> None:
+    """Checker rejection preserves the checker on the next refinement."""
+    adapter = FakeAdapter()
+    refiner = FakeRefiner([REJECTED_BY_CHECKER_SOURCE, ACCEPTED_BY_CHECKER_SOURCE])
+    with tempfile.TemporaryDirectory() as tmpdir:
+        synthesize(
+            adapter=adapter,
+            profile=Profile.SMOKE,
+            refiner=refiner,
+            artifact_root=Path(tmpdir),
+            refinements=2,
+        )
+
+    assert refiner.scopes == [True, False]
+    assert refiner.feedback[1][0] == (
+        "Policy legality checker rejected action '[X Y]' (checker=False)"
+    )
+    assert refiner.feedback[1][1] == (
+        "is_legal_action rejected the proposed action; refine propose_action only"
+    )
+    assert adapter.step_calls == ["[X Y]"] * adapter.max_steps
+
+
+def test_synthesize_refines_both_after_legality_disagreement() -> None:
+    """Environment disagreement allows refining the checker and action policy."""
+    adapter = FakeAdapter(reject_actions=True)
+    refiner = FakeRefiner([ACCEPTED_BY_CHECKER_SOURCE, ACCEPTED_BY_CHECKER_SOURCE])
+    with tempfile.TemporaryDirectory() as tmpdir:
+        synthesize(
+            adapter=adapter,
+            profile=Profile.SMOKE,
+            refiner=refiner,
+            artifact_root=Path(tmpdir),
+            refinements=2,
+        )
+
+    assert refiner.scopes == [True, True]
+    assert refiner.feedback[1][0] == (
+        "Legality disagreement: checker=True, environment=False; environment feedback: Illegal "
+        "action"
+    )
+    assert refiner.feedback[1][1] == (
+        "is_legal_action accepted an action that the environment rejected; refine both functions"
+    )

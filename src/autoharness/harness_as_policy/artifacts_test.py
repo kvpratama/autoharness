@@ -43,7 +43,8 @@ def test_write_config_json(store: ArtifactStore) -> None:
 
 def test_write_candidate_source(store: ArtifactStore) -> None:
     """write_candidate persists source to candidates/<id>.py."""
-    store.write_candidate(candidate_id="005", source="def propose_action(...): pass")
+    source = "def propose_action(...): pass\ndef is_legal_action(...): pass"
+    store.write_candidate(candidate_id="005", source=source)
     path = store.root / store.run_id / "candidates" / "005.py"
     assert path.exists()
     assert "propose_action" in path.read_text()
@@ -73,6 +74,23 @@ def test_write_rollout(store: ArtifactStore) -> None:
     assert path.exists()
     data = json.loads(path.read_text())
     assert data["heuristic"] == 0.5
+
+
+def test_write_rollout_serializes_legality_disagreement(store: ArtifactStore) -> None:
+    """write_rollout persists the legality disagreement termination value."""
+    result = RolloutResult(
+        steps=[],
+        heuristic=0.0,
+        terminal_reward=0.0,
+        legal_action_count=0,
+        termination_reason=TerminationReason("legality_disagreement"),
+        failure_summary="checker=True, environment=False",
+    )
+
+    store.write_rollout(candidate_id="006", result=result)
+
+    data = json.loads((store.run_dir / "rollouts" / "006.json").read_text())
+    assert data["termination_reason"] == "legality_disagreement"
 
 
 def test_write_event(store: ArtifactStore) -> None:
@@ -105,7 +123,10 @@ def test_write_tree(store: ArtifactStore) -> None:
 
 def test_write_best_policy(store: ArtifactStore) -> None:
     """write_best_policy persists best.py."""
-    source = "def propose_action(observation: str) -> str:\n    return '[A C]'"
+    source = (
+        "def propose_action(board: str) -> str:\n    return '[A C]'\n\n"
+        "def is_legal_action(board: str, action: str) -> bool:\n    return True"
+    )
     store.write_best_policy(source=source)
     path = store.root / store.run_id / "best.py"
     assert path.exists()
@@ -134,7 +155,10 @@ def test_write_evaluation(store: ArtifactStore) -> None:
 
 def test_load_best_policy(store: ArtifactStore) -> None:
     """load_best_policy reads back the best.py source."""
-    source = "def propose_action(observation: str) -> str:\n    return '[A C]'"
+    source = (
+        "def propose_action(board: str) -> str:\n    return '[A C]'\n\n"
+        "def is_legal_action(board: str, action: str) -> bool:\n    return True"
+    )
     store.write_best_policy(source=source)
     loaded = store.load_best_policy()
     assert loaded == source

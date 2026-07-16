@@ -24,6 +24,7 @@ class FakeAdapter:
     _step_results: list[StepResult] | None = None
     _step_index: int = -1
     _observation: str = ""
+    step_calls: list[str] | None = None
 
     def create(self) -> None:
         pass
@@ -34,6 +35,9 @@ class FakeAdapter:
         return self._observation
 
     def step(self, action: str) -> StepResult:
+        if self.step_calls is None:
+            self.step_calls = []
+        self.step_calls.append(action)
         self._step_index += 1
         if self._step_results and self._step_index < len(self._step_results):
             result = self._step_results[self._step_index]
@@ -54,7 +58,7 @@ class FakeAdapter:
 class FakeExecutor:
     """Fake executor for evaluation tests."""
 
-    responses: list[str | None] | None = None
+    responses: list[tuple[str, bool] | None] | None = None
     _call_index: int = -1
 
     def execute(self, source: str, observation: str) -> ExecutionResult:
@@ -71,10 +75,11 @@ class FakeExecutor:
                 )
             return ExecutionResult(
                 success=True,
-                output=response,
+                output=response[0],
                 latency=0.01,
+                is_legal_action=response[1],
             )
-        return ExecutionResult(success=True, output="[A C]", latency=0.01)
+        return ExecutionResult(success=True, output="[A C]", latency=0.01, is_legal_action=True)
 
 
 def test_evaluate_policy_on_env_solved() -> None:
@@ -106,7 +111,7 @@ def test_evaluate_policy_on_env_solved() -> None:
             feedback="",
         ),
     ]
-    executor = FakeExecutor(responses=["[A C]", "[C B]", "[A C]"])
+    executor = FakeExecutor(responses=[("[A C]", True), ("[C B]", True), ("[A C]", True)])
     result = evaluate_policy_on_env(
         adapter=adapter,
         executor=executor,
@@ -120,7 +125,7 @@ def test_evaluate_policy_on_env_solved() -> None:
 
 
 def test_evaluate_policy_on_env_illegal() -> None:
-    """evaluate_policy_on_env records illegal action reason."""
+    """Evaluation records disagreement when the environment rejects a checked action."""
     adapter = FakeAdapter(max_steps=14)
     adapter._step_results = [
         StepResult(
@@ -140,14 +145,14 @@ def test_evaluate_policy_on_env_illegal() -> None:
             feedback="Illegal",
         ),
     ]
-    executor = FakeExecutor(responses=["[A C]", "bad"])
+    executor = FakeExecutor(responses=[("[A C]", True), ("bad", True)])
     result = evaluate_policy_on_env(
         adapter=adapter,
         executor=executor,
         source="policy source",
     )
     assert not result.solved
-    assert result.termination_reason == TerminationReason.ILLEGAL_ACTION
+    assert result.termination_reason == TerminationReason.LEGALITY_DISAGREEMENT
     assert result.failure_summary is not None
 
 
@@ -164,7 +169,7 @@ def test_evaluate_policy_no_model_calls() -> None:
             feedback="",
         ),
     ]
-    executor = FakeExecutor(responses=["[A C]"])
+    executor = FakeExecutor(responses=[("[A C]", True)])
     result = evaluate_policy_on_env(
         adapter=adapter,
         executor=executor,
@@ -196,7 +201,7 @@ def test_evaluate_policy_on_env_preserves_step_progress_reward() -> None:
             ),
         ],
     )
-    executor = FakeExecutor(responses=["[A C]", "[C B]"])
+    executor = FakeExecutor(responses=[("[A C]", True), ("[C B]", True)])
 
     result = evaluate_policy_on_env(
         adapter=adapter,
@@ -228,7 +233,7 @@ def test_evaluate_policy_on_env_execution_failure_counts_env_steps_only() -> Non
             ),
         ],
     )
-    executor = FakeExecutor(responses=["[A C]", None])
+    executor = FakeExecutor(responses=[("[A C]", True), None])
 
     result = evaluate_policy_on_env(
         adapter=adapter,
@@ -241,6 +246,19 @@ def test_evaluate_policy_on_env_execution_failure_counts_env_steps_only() -> Non
     assert result.steps_used == 1
     assert result.legal_action_count == 1
     assert result.failure_summary == "boom"
+
+
+def test_evaluate_policy_checker_rejection_uses_zero_environment_steps() -> None:
+    """Evaluation exposes checker rejection without applying the action."""
+    adapter = FakeAdapter(max_steps=14)
+    executor = FakeExecutor(responses=[("[A C]", False)])
+
+    result = evaluate_policy_on_env(adapter=adapter, executor=executor, source="policy source")
+
+    assert result.termination_reason is not None
+    assert result.termination_reason.value == "policy_rejected_action"
+    assert result.steps_used == 0
+    assert adapter.step_calls is None
 
 
 def test_evaluation_result_attributes() -> None:

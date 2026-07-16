@@ -8,8 +8,12 @@ and keeps the best candidates as run artifacts.
 The generated policy contract is:
 
 ```python
-def propose_action(observation: str) -> str:
-    ...
+def propose_action(board: str) -> str:
+    """Return one of the best legal actions for the current board."""
+
+
+def is_legal_action(board: str, action: str) -> bool:
+    """Return whether action is legal for the current board."""
 ```
 
 For Tower of Hanoi, the policy must return exactly one bracketed move such as `[A C]`.
@@ -67,6 +71,9 @@ uv run autoharness evaluate --run artifacts/<run-id>
 ```
 
 This writes evaluation output to `artifacts/<run-id>/evaluation/generated-policy.json`.
+
+Evaluation requires both policy functions. Legacy runs containing only `propose_action` must be
+synthesized again; evaluation reports a contract failure rather than assuming the action is legal.
 
 ## Evaluate A Live LLM Baseline
 

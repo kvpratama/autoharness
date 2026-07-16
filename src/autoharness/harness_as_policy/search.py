@@ -99,8 +99,11 @@ def should_stop(
     return None
 
 
-ROOT_SOURCE = """def propose_action(observation: str) -> str:
+ROOT_SOURCE = """def propose_action(board: str) -> str:
     raise NotImplementedError("Root policy — replace me")
+
+def is_legal_action(board: str, action: str) -> bool:
+    raise NotImplementedError("Root legality checker — replace me")
 """
 
 
@@ -233,6 +236,15 @@ def synthesize(
             feedback.append(parent.failure_summary)
         if parent.termination_reason == TerminationReason.ILLEGAL_ACTION:
             feedback.append("Policy produced an illegal action")
+        elif parent.termination_reason == TerminationReason.POLICY_REJECTED_ACTION:
+            feedback.append(
+                "is_legal_action rejected the proposed action; refine propose_action only"
+            )
+        elif parent.termination_reason == TerminationReason.LEGALITY_DISAGREEMENT:
+            feedback.append(
+                "is_legal_action accepted an action that the environment rejected; refine both "
+                "functions"
+            )
         elif parent.termination_reason == TerminationReason.STEP_LIMIT:
             feedback.append("Policy reached step limit without solving")
         elif parent.termination_reason in (
@@ -249,6 +261,7 @@ def synthesize(
             parent_id,
             iteration,
         )
+        refine_legal_action = parent.termination_reason != TerminationReason.POLICY_REJECTED_ACTION
         refine_result = refiner.refine(
             env_name=adapter.env_id,
             rules=adapter.rules,
@@ -261,6 +274,7 @@ def synthesize(
                 parent.termination_reason.value if parent.termination_reason else "unknown"
             ),
             feedback=feedback,
+            refine_legal_action=refine_legal_action,
         )
         model_call_count = refiner.model_call_count
         logical_refinement_count = refiner.logical_refinement_count

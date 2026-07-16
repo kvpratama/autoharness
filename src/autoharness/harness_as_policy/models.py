@@ -9,6 +9,8 @@ from enum import StrEnum
 
 class TerminationReason(StrEnum):
     ILLEGAL_ACTION = "illegal_action"
+    POLICY_REJECTED_ACTION = "policy_rejected_action"
+    LEGALITY_DISAGREEMENT = "legality_disagreement"
     ENVIRONMENT_TERMINATION = "environment_termination"
     STEP_LIMIT = "step_limit"
     EXECUTION_FAILURE = "execution_failure"

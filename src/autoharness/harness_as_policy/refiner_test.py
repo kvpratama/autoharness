@@ -29,7 +29,7 @@ class FakeChatModel(BaseChatModel):
         if self.responses:
             response = self.responses.pop(0)
         else:
-            response = "def propose_action(observation: str) -> str:\n    return '[A C]'"
+            response = COMPLETE_SOURCE
         return ChatResult(generations=[ChatGeneration(message=AIMessage(content=response))])
 
     @property
@@ -37,20 +37,33 @@ class FakeChatModel(BaseChatModel):
         return "fake"
 
 
+COMPLETE_SOURCE = """def propose_action(board: str) -> str:
+    return '[A C]'
+
+def is_legal_action(board: str, action: str) -> bool:
+    return True
+"""
+
+
 def test_refiner_returns_source() -> None:
     """Refiner extracts source from model response."""
-    resp = "def propose_action(observation: str) -> str:\n    return '[A C]'"
+    resp = COMPLETE_SOURCE
     model = FakeChatModel(responses=[resp])
     refiner = Refiner(model=model)
     result = refiner.refine(
         rules="Tower of Hanoi rules",
         action_format="[A C]",
-        parent_source="def propose_action(observation: str) -> str:\n    raise NotImplementedError",
+        parent_source=(
+            "def propose_action(board: str) -> str:\n    raise NotImplementedError\n\n"
+            "def is_legal_action(board: str, action: str) -> bool:\n"
+            "    raise NotImplementedError"
+        ),
         parent_heuristic=0.0,
         parent_reward=0.0,
         parent_legal_actions=0,
         parent_status="contract_failure",
         feedback=["Initial implementation required"],
+        refine_legal_action=True,
     )
     assert result.success
     assert result.source is not None
@@ -69,10 +82,34 @@ def test_refiner_prompt_contains_required_sections() -> None:
         parent_legal_actions=5,
         parent_status="step_limit",
         feedback=["Did not solve puzzle"],
+        refine_legal_action=True,
     )
     assert "TowerOfHanoi-v0" in prompt
-    assert "propose_action" in prompt
+    assert "def propose_action(board: str) -> str:" in prompt
+    assert "def is_legal_action(board: str, action: str) -> bool:" in prompt
+    assert "Refine both `propose_action` and `is_legal_action`." in prompt
     assert "source code" in prompt
+
+
+def test_refiner_prompt_preserves_checker_when_scope_is_action_only() -> None:
+    """Prompt tells the model to preserve the checker for a policy rejection."""
+    prompt = build_refiner_prompt(
+        env_name="TowerOfHanoi-v0",
+        rules="Rules here",
+        action_format="[A C]",
+        parent_source="source code",
+        parent_heuristic=0.0,
+        parent_reward=0.0,
+        parent_legal_actions=0,
+        parent_status="policy_rejected_action",
+        feedback=[],
+        refine_legal_action=False,
+    )
+
+    assert (
+        "Refine only `propose_action`. Preserve `is_legal_action` and the helpers it depends on "
+        "unchanged."
+    ) in prompt
 
 
 def test_refiner_malformed_response() -> None:
@@ -88,6 +125,7 @@ def test_refiner_malformed_response() -> None:
         parent_legal_actions=0,
         parent_status="contract_failure",
         feedback=[""],
+        refine_legal_action=True,
     )
     assert not result.success
 
@@ -96,7 +134,7 @@ def test_refiner_model_call_count() -> None:
     """Refiner tracks how many model calls were made."""
     model = FakeChatModel(
         responses=[
-            "def propose_action(observation: str) -> str:\n    return '[A C]'",
+            COMPLETE_SOURCE,
         ]
     )
     refiner = Refiner(model=model)
@@ -109,6 +147,7 @@ def test_refiner_model_call_count() -> None:
         parent_legal_actions=0,
         parent_status="contract_failure",
         feedback=[""],
+        refine_legal_action=True,
     )
     assert refiner.model_call_count == 1
     assert refiner.logical_refinement_count == 1
@@ -127,7 +166,7 @@ def test_refiner_retry_on_transport_error() -> None:
             if self._call_count == 1:
                 raise ConnectionError("Transport failure")
             msg = AIMessage(
-                content="def propose_action(observation: str) -> str:\n    return '[A C]'",
+                content=COMPLETE_SOURCE,
             )
             return ChatResult(generations=[ChatGeneration(message=msg)])
 
@@ -146,6 +185,7 @@ def test_refiner_retry_on_transport_error() -> None:
         parent_legal_actions=0,
         parent_status="contract_failure",
         feedback=[""],
+        refine_legal_action=True,
     )
     assert result.success
     assert model._call_count == 2
@@ -175,6 +215,7 @@ def test_refiner_double_retry_failure() -> None:
         parent_legal_actions=0,
         parent_status="contract_failure",
         feedback=[""],
+        refine_legal_action=True,
     )
     assert not result.success
 
@@ -206,8 +247,11 @@ def test_refiner_extracts_source_from_content_blocks() -> None:
                         "type": "text",
                         "text": (
                             "```python\n"
-                            "def propose_action(observation: str) -> str:\n"
+                            "def propose_action(board: str) -> str:\n"
                             "    return '[A C]'\n"
+                            "\n"
+                            "def is_legal_action(board: str, action: str) -> bool:\n"
+                            "    return True\n"
                             "```"
                         ),
                     },
@@ -230,6 +274,7 @@ def test_refiner_extracts_source_from_content_blocks() -> None:
         parent_legal_actions=0,
         parent_status="contract_failure",
         feedback=[""],
+        refine_legal_action=True,
     )
     assert result.success
     assert result.source is not None
@@ -263,6 +308,7 @@ def test_refiner_content_blocks_no_text_block() -> None:
         parent_legal_actions=0,
         parent_status="contract_failure",
         feedback=[""],
+        refine_legal_action=True,
     )
     assert not result.success
 
@@ -290,14 +336,37 @@ def test_refiner_content_blocks_empty_list() -> None:
         parent_legal_actions=0,
         parent_status="contract_failure",
         feedback=[""],
+        refine_legal_action=True,
     )
     assert not result.success
 
 
 def test_refiner_conforms_to_protocol() -> None:
     """Refiner satisfies RefinerProtocol structurally."""
-    resp = "def propose_action(observation: str) -> str:\n    return '[A C]'"
+    resp = COMPLETE_SOURCE
     model = FakeChatModel(responses=[resp])
     refiner: RefinerProtocol = Refiner(model=model)
     assert refiner.model_call_count == 0
     assert refiner.logical_refinement_count == 0
+
+
+def test_refiner_rejects_response_missing_legality_checker() -> None:
+    """A replacement module must contain both policy contract functions."""
+    model = FakeChatModel(
+        responses=["def propose_action(observation: str) -> str:\n    return '[A C]'"]
+    )
+
+    result = Refiner(model=model).refine(
+        rules="Rules",
+        action_format="[A C]",
+        parent_source="old",
+        parent_heuristic=0.0,
+        parent_reward=0.0,
+        parent_legal_actions=0,
+        parent_status="contract_failure",
+        feedback=[],
+        refine_legal_action=True,
+    )
+
+    assert not result.success
+    assert result.error_details == "Model response did not contain both required policy functions"

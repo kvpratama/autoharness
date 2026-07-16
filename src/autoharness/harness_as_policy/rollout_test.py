@@ -16,7 +16,7 @@ from autoharness.harness_as_policy.rollout import RolloutEvaluator
 class FakeExecutor:
     """Fake executor that returns configured results."""
 
-    step_results: list[str | None] | None = None
+    step_results: list[tuple[str, bool] | None] | None = None
 
     def execute(self, source: str, observation: str) -> ExecutionResult:
         if not self.step_results:
@@ -38,8 +38,9 @@ class FakeExecutor:
             )
         return ExecutionResult(
             success=True,
-            output=result,
+            output=result[0],
             latency=0.0,
+            is_legal_action=result[1],
             failure_type=None,
             error_details=None,
         )
@@ -55,6 +56,7 @@ class FakeAdapter:
         self.max_steps = 10
         self._step_results = step_results or []
         self._step_index = -1
+        self.step_calls: list[str] = []
 
     def create(self) -> None:
         pass
@@ -64,6 +66,7 @@ class FakeAdapter:
         return "initial observation"
 
     def step(self, action: str) -> StepResult:
+        self.step_calls.append(action)
         self._step_index += 1
         if self._step_results and self._step_index < len(self._step_results):
             return self._step_results[self._step_index]
@@ -107,7 +110,7 @@ def test_rollout_solves_environment() -> None:
             ),
         ]
     )
-    executor = FakeExecutor(step_results=["[A C]", "[C B]", "[A C]"])
+    executor = FakeExecutor(step_results=[("[A C]", True), ("[C B]", True), ("[A C]", True)])
     evaluator = RolloutEvaluator(adapter=adapter, executor=executor)
     result = evaluator.evaluate(source="dummy source")
     assert result.heuristic == 1.0
@@ -115,7 +118,7 @@ def test_rollout_solves_environment() -> None:
 
 
 def test_rollout_illegal_action_returns_zero() -> None:
-    """First illegal action causes heuristic 0 and immediate stop."""
+    """Environment rejection after checker approval causes zero score and immediate stop."""
     adapter = FakeAdapter(
         step_results=[
             StepResult(
@@ -136,11 +139,11 @@ def test_rollout_illegal_action_returns_zero() -> None:
             ),
         ]
     )
-    executor = FakeExecutor(step_results=["[A C]", "invalid"])
+    executor = FakeExecutor(step_results=[("[A C]", True), ("invalid", True)])
     evaluator = RolloutEvaluator(adapter=adapter, executor=executor)
     result = evaluator.evaluate(source="dummy source")
     assert result.heuristic == 0.0
-    assert result.termination_reason == TerminationReason.ILLEGAL_ACTION
+    assert result.termination_reason == TerminationReason.LEGALITY_DISAGREEMENT
 
 
 def test_rollout_step_limit() -> None:
@@ -174,7 +177,7 @@ def test_rollout_step_limit() -> None:
         ],
     )
     adapter.max_steps = 3
-    executor = FakeExecutor(step_results=["[A C]", "[C B]", "[A C]"])
+    executor = FakeExecutor(step_results=[("[A C]", True), ("[C B]", True), ("[A C]", True)])
     evaluator = RolloutEvaluator(adapter=adapter, executor=executor)
     result = evaluator.evaluate(source="dummy source")
     assert result.heuristic == 0.8
@@ -196,7 +199,7 @@ def test_rollout_execution_failure() -> None:
             ),
         ]
     )
-    executor = FakeExecutor(step_results=["[A C]", None])
+    executor = FakeExecutor(step_results=[("[A C]", True), None])
     evaluator = RolloutEvaluator(adapter=adapter, executor=executor)
     result = evaluator.evaluate(source="dummy source")
     assert result.heuristic == 0.0
@@ -225,7 +228,51 @@ def test_legal_action_count_tracked() -> None:
             ),
         ]
     )
-    executor = FakeExecutor(step_results=["[A C]", "invalid"])
+    executor = FakeExecutor(step_results=[("[A C]", True), ("invalid", True)])
     evaluator = RolloutEvaluator(adapter=adapter, executor=executor)
     result = evaluator.evaluate(source="dummy source")
     assert result.legal_action_count == 1
+
+
+def test_checker_rejection_stops_before_environment_step() -> None:
+    """A checker-rejected action fails closed without applying an environment step."""
+    adapter = FakeAdapter()
+    executor = FakeExecutor(step_results=[("[A C]", False)])
+
+    result = RolloutEvaluator(adapter=adapter, executor=executor).evaluate("dummy source")
+
+    assert adapter.step_calls == []
+    assert result.steps == []
+    assert result.heuristic == 0.0
+    assert result.terminal_reward == 0.0
+    assert result.legal_action_count == 0
+    assert result.termination_reason.value == "policy_rejected_action"
+    assert result.last_observation == "initial observation"
+    assert "'[A C]'" in (result.failure_summary or "")
+
+
+def test_checker_environment_legality_disagreement_returns_zero() -> None:
+    """Environment rejection after checker approval is reported as disagreement."""
+    adapter = FakeAdapter(
+        step_results=[
+            StepResult(
+                observation="environment observation",
+                action="[A C]",
+                is_legal=False,
+                reward=0.7,
+                terminated=True,
+                feedback="Environment says illegal",
+            )
+        ]
+    )
+    executor = FakeExecutor(step_results=[("[A C]", True)])
+
+    result = RolloutEvaluator(adapter=adapter, executor=executor).evaluate("dummy source")
+
+    assert adapter.step_calls == ["[A C]"]
+    assert result.heuristic == 0.0
+    assert result.terminal_reward == 0.0
+    assert result.legal_action_count == 0
+    assert result.termination_reason.value == "legality_disagreement"
+    assert "checker=True" in (result.failure_summary or "")
+    assert "environment=False" in (result.failure_summary or "")

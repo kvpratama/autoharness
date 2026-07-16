@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ast
+import json
 import os
 import select
 import signal
@@ -86,15 +87,17 @@ DANGEROUS_ATTRIBUTES: set[str] = {
 
 MAX_OUTPUT_BYTES: int = 65536
 MAX_STDERR_BYTES: int = 65536
+RESULT_MARKER: str = "__AUTOHARNESS_RESULT__"
 
 
 @dataclass
 class ExecutionResult:
-    """Result of executing a policy module's propose_action."""
+    """Result of atomically executing a policy module's two-function contract."""
 
     success: bool
     output: str | None
     latency: float
+    is_legal_action: bool | None = None
     failure_type: str | None = None
     error_details: str | None = None
 
@@ -135,7 +138,7 @@ class PolicyExecutor:
                 error_details=parse_err,
             )
         try:
-            output = self._run_subprocess(source, observation)
+            output, is_legal_action = self._run_subprocess(source, observation)
         except subprocess.TimeoutExpired:
             return ExecutionResult(
                 success=False,
@@ -152,18 +155,11 @@ class PolicyExecutor:
                 failure_type="execution_failure",
                 error_details=str(e),
             )
-        if not isinstance(output, str):
-            return ExecutionResult(
-                success=False,
-                output=None,
-                latency=time.monotonic() - start,
-                failure_type="contract_failure",
-                error_details="propose_action did not return a string",
-            )
         return ExecutionResult(
             success=True,
             output=output,
             latency=time.monotonic() - start,
+            is_legal_action=is_legal_action,
         )
 
     def _validate_ast(self, source: str) -> str | None:
@@ -172,16 +168,26 @@ class PolicyExecutor:
             tree = ast.parse(source)
         except SyntaxError as e:
             return f"Syntax error: {e}"
-        has_propose_action = False
-        for node in ast.walk(tree):
-            if isinstance(node, ast.FunctionDef) and node.name == "propose_action":
-                has_propose_action = True
-                args = node.args
-                if len(args.args) != 1:
-                    return "propose_action must take exactly 1 argument (observation)"
-                break
-        if not has_propose_action:
-            return "Module must define propose_action(observation: str) -> str"
+        required_functions = {"propose_action": 1, "is_legal_action": 2}
+        found_functions: set[str] = set()
+        for node in tree.body:
+            if not isinstance(node, ast.FunctionDef) or node.name not in required_functions:
+                continue
+            found_functions.add(node.name)
+            args = node.args
+            if (
+                len(args.args) != required_functions[node.name]
+                or args.posonlyargs
+                or args.vararg is not None
+                or args.kwarg is not None
+                or args.kwonlyargs
+            ):
+                expected = required_functions[node.name]
+                return f"{node.name} must take exactly {expected} positional argument(s)"
+        if "propose_action" not in found_functions:
+            return "Module must define propose_action(board: str) -> str"
+        if "is_legal_action" not in found_functions:
+            return "Module must define is_legal_action(board: str, action: str) -> bool"
         for node in ast.walk(tree):
             if isinstance(node, ast.Attribute) and node.attr in DANGEROUS_ATTRIBUTES:
                 return f"Disallowed attribute access: {node.attr}"
@@ -210,7 +216,7 @@ class PolicyExecutor:
         cpu = self._cpu_limit
         mem = self._memory_limit_bytes
         return textwrap.dedent(f"""\
-        import builtins, os, resource, sys
+        import builtins, json, os, resource, sys
 
         resource.setrlimit(resource.RLIMIT_CPU, ({cpu}, {cpu}))
         resource.setrlimit(resource.RLIMIT_AS, ({mem}, {mem}))
@@ -261,11 +267,16 @@ class PolicyExecutor:
         exec(compile({source!r}, "<policy>", "exec"), _globals)
 
         _observation = {observation!r}
-        _result = _globals["propose_action"](_observation)
-        if not isinstance(_result, str):
-            print(type(_result).__name__, end="")
+        _action = _globals["propose_action"](_observation)
+        if not isinstance(_action, str):
+            print("propose_action did not return a string", file=sys.stderr)
             sys.exit(2)
-        print(_result, end="")
+        _is_legal = _globals["is_legal_action"](_observation, _action)
+        if not isinstance(_is_legal, bool):
+            print("is_legal_action did not return a bool", file=sys.stderr)
+            sys.exit(2)
+        _payload = json.dumps({{"action": _action, "is_legal_action": _is_legal}})
+        print({RESULT_MARKER!r} + _payload)
         """)
 
     def _read_output(self, proc: subprocess.Popen[bytes]) -> str:
@@ -343,8 +354,8 @@ class PolicyExecutor:
 
         return stdout_str.strip()
 
-    def _run_subprocess(self, source: str, observation: str) -> str:
-        """Run propose_action in a subprocess with resource limits and process group isolation."""
+    def _run_subprocess(self, source: str, observation: str) -> tuple[str, bool]:
+        """Run both policy functions and parse the final marked protocol result."""
         script = self._make_script(source, observation)
         with tempfile.TemporaryDirectory() as tmpdir:
             proc = subprocess.Popen(
@@ -355,11 +366,28 @@ class PolicyExecutor:
                 start_new_session=True,
             )
             try:
-                return self._read_output(proc)
+                stdout = self._read_output(proc)
             except subprocess.TimeoutExpired, RuntimeError:
                 self._kill_process_group(proc)
                 proc.wait()
                 raise
+        marker_index = stdout.rfind(RESULT_MARKER)
+        if marker_index < 0:
+            raise RuntimeError("Missing execution result protocol marker")
+        payload_text = stdout[marker_index + len(RESULT_MARKER) :].strip()
+        try:
+            payload: object = json.loads(payload_text)
+        except json.JSONDecodeError as error:
+            raise RuntimeError("Malformed execution result protocol") from error
+        if not isinstance(payload, dict):
+            raise RuntimeError("Malformed execution result protocol")
+        action = payload.get("action")
+        is_legal_action = payload.get("is_legal_action")
+        if not isinstance(action, str):
+            raise RuntimeError("propose_action did not return a string")
+        if not isinstance(is_legal_action, bool):
+            raise RuntimeError("is_legal_action did not return a bool")
+        return action, is_legal_action
 
     @staticmethod
     def _kill_process_group(proc: subprocess.Popen[bytes]) -> None:

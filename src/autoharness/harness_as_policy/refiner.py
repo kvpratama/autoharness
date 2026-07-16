@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ast
 import os
 from dataclasses import dataclass
 from typing import Protocol
@@ -36,15 +37,21 @@ class RefinerResult:
 
 REFINER_SYSTEM_PROMPT = (
     "You are a policy-synthesis assistant. Your task is to write a Python "
-    "module that solves a game by implementing one function.\n"
+    "module that solves a game by implementing two functions.\n"
     "\n"
     "Environment: {env_name}\n"
     "Rules: {rules}\n"
     "Action format: {action_format}\n"
     "\n"
-    "Function contract:\n"
-    "- `def propose_action(observation: str) -> str:` — receive the "
-    "current environment observation and return exactly one valid action.\n"
+    "Function contracts:\n"
+    "- `def propose_action(board: str) -> str:` — propose one of the best legal actions.\n"
+    "- `def is_legal_action(board: str, action: str) -> bool:` — "
+    "decide whether the proposed action is\n"
+    "  legal for that board.\n"
+    "Both functions are required in every replacement module.\n"
+    "\n"
+    "Refinement scope:\n"
+    "{refinement_scope}\n"
     "\n"
     "You may define private helper functions and internal data structures.\n"
     "Do NOT use filesystem, network, subprocess, or dynamic-code operations.\n"
@@ -83,9 +90,19 @@ def build_refiner_prompt(
     parent_legal_actions: int,
     parent_status: str,
     feedback: list[str],
+    *,
+    refine_legal_action: bool,
 ) -> str:
     """Build the refiner prompt with all context."""
     fb_text = "\n".join(f"- {f}" for f in feedback[:5]) if feedback else "No feedback."
+    refinement_scope = (
+        "Refine both `propose_action` and `is_legal_action`."
+        if refine_legal_action
+        else (
+            "Refine only `propose_action`. Preserve `is_legal_action` and the helpers it depends "
+            "on unchanged."
+        )
+    )
     return REFINER_SYSTEM_PROMPT.format(
         env_name=env_name,
         rules=rules,
@@ -96,6 +113,7 @@ def build_refiner_prompt(
         parent_legal_actions=parent_legal_actions,
         parent_status=parent_status,
         feedback=fb_text,
+        refinement_scope=refinement_scope,
     )
 
 
@@ -121,6 +139,16 @@ def _extract_source(response: str) -> str | None:
     if "def propose_action" in text:
         return text
     return None
+
+
+def _has_policy_contract(source: str) -> bool:
+    """Return whether source defines both required top-level policy functions."""
+    try:
+        module = ast.parse(source)
+    except SyntaxError:
+        return False
+    names = {node.name for node in module.body if isinstance(node, ast.FunctionDef)}
+    return {"is_legal_action", "propose_action"} <= names
 
 
 def _normalize_content(response) -> str:
@@ -169,6 +197,8 @@ class RefinerProtocol(Protocol):
         parent_status: str,
         feedback: list[str],
         env_name: str = "",
+        *,
+        refine_legal_action: bool,
     ) -> RefinerResult: ...
 
 
@@ -204,6 +234,8 @@ class Refiner:
         parent_status: str,
         feedback: list[str],
         env_name: str = "",
+        *,
+        refine_legal_action: bool,
     ) -> RefinerResult:
         """Call the model to refine the parent policy."""
         self._logical_refinement_count += 1
@@ -217,6 +249,7 @@ class Refiner:
             parent_legal_actions=parent_legal_actions,
             parent_status=parent_status,
             feedback=feedback,
+            refine_legal_action=refine_legal_action,
         )
         # Attempt with one retry on transport error
         last_error: str | None = None
@@ -232,12 +265,12 @@ class Refiner:
                 continue
             content = _normalize_content(response)
             source = _extract_source(content)
-            if source and "propose_action" in source:
+            if source and _has_policy_contract(source):
                 return RefinerResult(success=True, source=source)
             return RefinerResult(
                 success=False,
                 source=None,
-                error_details="Model response did not contain valid propose_action source",
+                error_details="Model response did not contain both required policy functions",
             )
         return RefinerResult(
             success=False,

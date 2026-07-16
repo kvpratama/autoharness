@@ -123,7 +123,10 @@ def test_evaluate_cmd_requires_run() -> None:
     """evaluate command requires --run flag."""
     with tempfile.TemporaryDirectory() as tmpdir:
         # Create the best.py file that evaluate_cmd looks for
-        (Path(tmpdir) / "best.py").write_text("def propose_action(obs): return '[A C]'")
+        (Path(tmpdir) / "best.py").write_text(
+            "def propose_action(board: str) -> str: return '[A C]'\n"
+            "def is_legal_action(board: str, action: str) -> bool: return True"
+        )
         with patch("autoharness.cli.evaluate_policy") as mock_eval:
             mock_eval.return_value = []
             with patch("autoharness.cli.format_evaluation_summary") as mock_fmt:
@@ -150,7 +153,8 @@ def test_evaluate_cmd_persists_structured_termination_data() -> None:
         run_dir = Path(tmpdir) / "run"
         run_dir.mkdir()
         (run_dir / "best.py").write_text(
-            "def propose_action(observation: str) -> str: return '[A C]'"
+            "def propose_action(board: str) -> str: return '[A C]'\n"
+            "def is_legal_action(board: str, action: str) -> bool: return True"
         )
         with patch("autoharness.cli.evaluate_policy", return_value=[result]):
             evaluate_cmd(run_dir=run_dir)

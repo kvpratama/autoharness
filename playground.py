@@ -14,6 +14,7 @@ from __future__ import annotations
 import argparse
 import os
 import sys
+import textwrap
 
 from dotenv import load_dotenv
 
@@ -77,7 +78,13 @@ def main() -> int:
 
     print("  ✅ Refiner created")
 
-    dummy_source = 'def propose_action(observation: str) -> str:\n    return "[A C]"'
+    dummy_source = textwrap.dedent("""\
+    def propose_action(board: str) -> str:
+        return "[A C]"
+
+    def is_legal_action(board: str, action: str) -> bool:
+        return True
+    """)
 
     print("\n--- Calling Refiner.refine() ---")
     sys.stdout.flush()
@@ -93,6 +100,7 @@ def main() -> int:
             parent_status="step_limit",
             feedback=["Did not solve within step limit"],
             env_name="TowerOfHanoi-v0",
+            refine_legal_action=True,
         )
     except Exception as e:
         print(f"❌ refine() raised: {type(e).__name__}: {e}")

@@ -75,6 +75,19 @@ class RolloutEvaluator:
                     last_observation=steps[-1].observation if steps else None,
                 )
             action = exec_result.output or ""
+            if exec_result.is_legal_action is not True:
+                return RolloutResult(
+                    steps=steps,
+                    heuristic=0.0,
+                    terminal_reward=0.0,
+                    legal_action_count=len([s for s in steps if s.is_legal]),
+                    termination_reason=TerminationReason.POLICY_REJECTED_ACTION,
+                    failure_summary=(
+                        f"Policy legality checker rejected action {action!r} "
+                        f"(checker={exec_result.is_legal_action!r})"
+                    ),
+                    last_observation=observation,
+                )
             step_result = self._adapter.step(action)
             steps.append(step_result)
             if not step_result.is_legal:
@@ -83,8 +96,11 @@ class RolloutEvaluator:
                     heuristic=0.0,
                     terminal_reward=0.0,
                     legal_action_count=len([s for s in steps if s.is_legal]),
-                    termination_reason=TerminationReason.ILLEGAL_ACTION,
-                    failure_summary=step_result.feedback or "Illegal action",
+                    termination_reason=TerminationReason.LEGALITY_DISAGREEMENT,
+                    failure_summary=(
+                        "Legality disagreement: checker=True, environment=False; "
+                        f"environment feedback: {step_result.feedback or 'Illegal action'}"
+                    ),
                     last_observation=steps[-1].observation if steps else None,
                 )
             if step_result.terminated:

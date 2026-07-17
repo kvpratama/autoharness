@@ -159,6 +159,7 @@ def test_profile_values() -> None:
     """Profile enum has correct refinement budgets."""
     assert Profile.SMOKE.refinements == 8
     assert Profile.LOW_COST.refinements == 32
+    assert Profile.FULL_SEARCH.refinements == 256
 
 
 def test_termination_reason_values() -> None:

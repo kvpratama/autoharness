@@ -17,7 +17,7 @@ from autoharness.harness_as_policy.evaluation import (
     format_evaluation_summary,
 )
 from autoharness.harness_as_policy.live_policy import LivePolicy
-from autoharness.harness_as_policy.models import TerminationReason
+from autoharness.harness_as_policy.models import Profile, TerminationReason
 from autoharness.harness_as_policy.refiner import Refiner
 from autoharness.harness_as_policy.search import synthesize
 from autoharness.harness_as_policy.tower_of_hanoi import (
@@ -54,8 +54,8 @@ def _build_parser() -> argparse.ArgumentParser:
     syn.add_argument(
         "--profile",
         default=None,
-        choices=["smoke", "low-cost"],
-        help="Synthesis profile (default: smoke)",
+        choices=[p.value for p in Profile],
+        help="Synthesis profile: smoke, low-cost, or full-search (default: smoke)",
     )
     syn.add_argument(
         "--model",

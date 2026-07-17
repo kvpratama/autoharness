@@ -92,3 +92,23 @@ def test_effective_refinements_custom() -> None:
     with patch.dict(os.environ, {"AUTOHARNESS_REFINEMENTS": "5"}, clear=True):
         settings = _settings()
     assert settings.effective_refinements == 5
+
+
+def test_effective_refinements_full_search() -> None:
+    """Full-search profile resolves to 256 refinements."""
+    with patch.dict(os.environ, {"AUTOHARNESS_PROFILE": "full-search"}, clear=True):
+        settings = _settings()
+    assert settings.profile.value == "full-search"
+    assert settings.effective_refinements == 256
+
+
+def test_effective_refinements_full_search_override() -> None:
+    """Full-search profile with refinements override yields the override."""
+    with patch.dict(
+        os.environ,
+        {"AUTOHARNESS_PROFILE": "full-search", "AUTOHARNESS_REFINEMENTS": "10"},
+        clear=True,
+    ):
+        settings = _settings()
+    assert settings.profile.value == "full-search"
+    assert settings.effective_refinements == 10

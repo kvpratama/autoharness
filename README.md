@@ -35,7 +35,13 @@ Create a `.env` file or export environment variables for your model provider and
 settings. At minimum, provide a model identifier:
 
 ```bash
-AUTOHARNESS_MODEL=google_genai:gemini-2.5-flash
+AUTOHARNESS_MODEL=<provider>:<model-id>
+```
+
+For example, to use Anthropic's Claude:
+
+```bash
+AUTOHARNESS_MODEL=anthropic:claude-3-5-sonnet-20241022
 ```
 
 Provider API keys are read by the corresponding LangChain integration. For example, use the
@@ -46,7 +52,7 @@ environment variable expected by that provider package.
 ```bash
 uv run autoharness synthesize \
   --env TowerOfHanoi-v0 \
-  --model google_genai:gemini-2.5-flash \
+  --model <provider>:<model-id> \
   --profile smoke
 ```
 
@@ -54,13 +60,28 @@ The command prints a run ID and writes artifacts under `artifacts/<run-id>/`.
 
 Useful options:
 
-- `--profile smoke`: short run, currently 8 refinements
+- `--profile smoke`: short run, currently 8 refinements (default)
 - `--profile low-cost`: longer low-cost profile, currently 32 refinements
+- `--profile full-search`: paper-scale maximum budget, 256 refinements
 - `--refinements N`: override the profile refinement budget
 - `--artifact-root DIR`: write run output somewhere other than `artifacts`
 - `--seed N`: set the Thompson sampling RNG seed
 - `--execution-timeout N`: set the per-action policy execution timeout in seconds
 - `--max-source-size N`: cap generated policy source size in bytes
+
+## Paper Reproduction (Harness-as-Policy)
+
+To reproduce the paper-scale training run with the same configurations as the Harness-as-Policy paper (arXiv:2603.03329), run synthesis using the `full-search` profile and the Gemini 2.5 Flash model:
+
+```bash
+uv run autoharness synthesize \
+  --env TowerOfHanoi-v0 \
+  --profile full-search \
+  --model google_genai:gemini-2.5-flash
+```
+
+> [!NOTE]
+> The `full-search` profile configures a maximum budget of 256 refinements. The paper reports an observed average of 89.4 iterations across games, which is an empirical result rather than a hardcoded setting.
 
 ## Evaluate A Generated Policy
 
@@ -106,7 +127,7 @@ AutoHarness configuration is defined in `src/autoharness/harness_as_policy/confi
 | --- | --- | --- |
 | `AUTOHARNESS_MODEL` | required | LangChain model identifier for synthesis |
 | `AUTOHARNESS_ENV_ID` | `TowerOfHanoi-v0` | Environment ID |
-| `AUTOHARNESS_PROFILE` | `smoke` | Synthesis profile: `smoke` or `low-cost` |
+| `AUTOHARNESS_PROFILE` | `smoke` | Synthesis profile: `smoke`, `low-cost`, or `full-search` |
 | `AUTOHARNESS_REFINEMENTS` | profile default | Optional refinement budget override |
 | `AUTOHARNESS_ARTIFACT_ROOT` | `artifacts` | Output directory for run artifacts |
 | `AUTOHARNESS_THOMPSON_SEED` | `42` | RNG seed for candidate selection |

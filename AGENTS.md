@@ -104,7 +104,7 @@ Important settings:
 
 - `AUTOHARNESS_MODEL`: required for synthesis unless passed with `--model`
 - `AUTOHARNESS_ENV_ID`: defaults to `TowerOfHanoi-v0`
-- `AUTOHARNESS_PROFILE`: `smoke` or `low-cost`
+- `AUTOHARNESS_PROFILE`: `smoke`, `low-cost`, or `full-search` (default: smoke)
 - `AUTOHARNESS_REFINEMENTS`: optional override for the profile refinement budget
 - `AUTOHARNESS_ARTIFACT_ROOT`: defaults to `artifacts`
 - `AUTOHARNESS_THOMPSON_SEED`: defaults to `42`

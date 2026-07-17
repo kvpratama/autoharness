@@ -20,14 +20,15 @@ class TerminationReason(StrEnum):
 class Profile(StrEnum):
     SMOKE = "smoke"
     LOW_COST = "low-cost"
+    FULL_SEARCH = "full-search"
 
     @property
     def refinements(self) -> int:
-        return {"smoke": 8, "low-cost": 32}[self.value]
-
-    @property
-    def max_steps(self) -> int:
-        return 14
+        return {
+            "smoke": 8,
+            "low-cost": 32,
+            "full-search": 256,
+        }[self.value]
 
 
 @dataclass

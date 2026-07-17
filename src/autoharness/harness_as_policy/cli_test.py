@@ -119,6 +119,82 @@ def test_synthesize_cmd_creates_artifacts() -> None:
         assert len(dirs) >= 0
 
 
+def test_synthesize_cmd_full_search() -> None:
+    """synthesize command with --profile full-search passes refinements=256."""
+    with (
+        tempfile.TemporaryDirectory() as tmpdir,
+        patch("autoharness.cli.Refiner"),
+        patch("autoharness.cli.synthesize") as mock_synthesize,
+    ):
+        mock_synthesize.return_value = {
+            "run_id": "test123",
+            "stop_reason": "budget exhausted",
+            "best_candidate_id": "001",
+            "total_candidates": 3,
+            "iterations_used": 2,
+            "profile": "full-search",
+            "model_call_count": 2,
+            "logical_refinement_count": 2,
+        }
+        with patch(
+            "sys.argv",
+            [
+                "autoharness",
+                "synthesize",
+                "--env",
+                "TowerOfHanoi-v0",
+                "--profile",
+                "full-search",
+                "--model",
+                "anthropic:claude-3-opus",
+                "--artifact-root",
+                tmpdir,
+            ],
+        ):
+            result = synthesize_cmd()
+    assert result is not None
+    assert mock_synthesize.call_args.kwargs["refinements"] == 256
+
+
+def test_synthesize_cmd_full_search_override() -> None:
+    """synthesize command with --profile full-search and --refinements 10 passes refinements=10."""
+    with (
+        tempfile.TemporaryDirectory() as tmpdir,
+        patch("autoharness.cli.Refiner"),
+        patch("autoharness.cli.synthesize") as mock_synthesize,
+    ):
+        mock_synthesize.return_value = {
+            "run_id": "test123",
+            "stop_reason": "budget exhausted",
+            "best_candidate_id": "001",
+            "total_candidates": 3,
+            "iterations_used": 2,
+            "profile": "full-search",
+            "model_call_count": 2,
+            "logical_refinement_count": 2,
+        }
+        with patch(
+            "sys.argv",
+            [
+                "autoharness",
+                "synthesize",
+                "--env",
+                "TowerOfHanoi-v0",
+                "--profile",
+                "full-search",
+                "--refinements",
+                "10",
+                "--model",
+                "anthropic:claude-3-opus",
+                "--artifact-root",
+                tmpdir,
+            ],
+        ):
+            result = synthesize_cmd()
+    assert result is not None
+    assert mock_synthesize.call_args.kwargs["refinements"] == 10
+
+
 def test_evaluate_cmd_requires_run() -> None:
     """evaluate command requires --run flag."""
     with tempfile.TemporaryDirectory() as tmpdir:

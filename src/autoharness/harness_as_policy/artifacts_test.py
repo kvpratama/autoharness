@@ -147,7 +147,7 @@ def test_load_events_propagates_unexpected_errors(
     path = store.run_dir / "events.jsonl"
     path.write_text('{"iteration": 1}\n')
 
-    def raise_unexpected_error(_path: Path) -> str:
+    def raise_unexpected_error(*args: object, **kwargs: object) -> str:
         raise RuntimeError("unexpected failure")
 
     monkeypatch.setattr(Path, "read_text", raise_unexpected_error)
@@ -163,7 +163,7 @@ def test_load_events_propagates_file_read_errors(
     path = store.run_dir / "events.jsonl"
     path.write_text('{"iteration": 1}\n')
 
-    def raise_read_error(_path: Path) -> str:
+    def raise_read_error(*args: object, **kwargs: object) -> str:
         raise PermissionError("event history is unreadable")
 
     monkeypatch.setattr(Path, "read_text", raise_read_error)

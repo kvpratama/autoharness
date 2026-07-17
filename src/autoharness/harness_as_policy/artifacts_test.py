@@ -111,6 +111,67 @@ def test_write_event(store: ArtifactStore) -> None:
     assert data["iteration"] == 1
 
 
+def test_write_event_replaces_existing_event_file(
+    store: ArtifactStore, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """write_event atomically replaces an existing event file."""
+    path = store.run_dir / "events.jsonl"
+    path.write_text('{"iteration": 1}\n')
+    replaced_paths: list[Path] = []
+    original_replace = Path.replace
+
+    def recording_replace(source: Path, target: Path) -> Path:
+        replaced_paths.append(target)
+        return original_replace(source, target)
+
+    monkeypatch.setattr(Path, "replace", recording_replace)
+
+    store.write_event(
+        Event(
+            iteration=2,
+            event_type="refine",
+            candidate_id="002",
+            parent_id="001",
+            metadata={},
+        )
+    )
+
+    assert replaced_paths == [path]
+    assert [event["iteration"] for event in store.load_events()] == [1, 2]
+
+
+def test_load_events_propagates_unexpected_errors(
+    store: ArtifactStore, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """load_events does not disguise unrelated failures as empty history."""
+    path = store.run_dir / "events.jsonl"
+    path.write_text('{"iteration": 1}\n')
+
+    def raise_unexpected_error(_path: Path) -> str:
+        raise RuntimeError("unexpected failure")
+
+    monkeypatch.setattr(Path, "read_text", raise_unexpected_error)
+
+    with pytest.raises(RuntimeError, match="unexpected failure"):
+        store.load_events()
+
+
+def test_load_events_propagates_file_read_errors(
+    store: ArtifactStore, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """load_events exposes event-history read failures to callers."""
+    path = store.run_dir / "events.jsonl"
+    path.write_text('{"iteration": 1}\n')
+
+    def raise_read_error(_path: Path) -> str:
+        raise PermissionError("event history is unreadable")
+
+    monkeypatch.setattr(Path, "read_text", raise_read_error)
+
+    with pytest.raises(PermissionError, match="event history is unreadable"):
+        store.load_events()
+
+
 def test_write_tree(store: ArtifactStore) -> None:
     """write_tree persists tree data as JSON."""
     tree = {"candidates": {"000": {"heuristic": 0.0}}, "best": "001"}

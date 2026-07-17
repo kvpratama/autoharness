@@ -3,12 +3,27 @@
 from __future__ import annotations
 
 import os
+from pathlib import Path
 from typing import Any
 from unittest.mock import patch
 
-from autoharness.harness_as_policy.config import Settings
+import pytest
+from pydantic import ValidationError
+from pydantic_settings import SettingsConfigDict
+
+from autoharness.harness_as_policy.config import Settings, _LogLevelOnlySettings
 
 _BASE: dict[str, Any] = {"model": "test-model"}
+
+
+class _EnvOnlyLogLevelSettings(_LogLevelOnlySettings):
+    """Test helper that reads log level from process env only (no .env file)."""
+
+    model_config = SettingsConfigDict(
+        env_prefix="AUTOHARNESS_",
+        env_file=None,
+        extra="ignore",
+    )
 
 
 def _settings(**overrides: Any) -> Settings:
@@ -112,3 +127,37 @@ def test_effective_refinements_full_search_override() -> None:
         settings = _settings()
     assert settings.profile.value == "full-search"
     assert settings.effective_refinements == 10
+
+
+def test_log_level_only_settings_unset_is_none() -> None:
+    """Early log-level settings leave log_level unset when env/.env omit it."""
+    with patch.dict(os.environ, {}, clear=True):
+        settings = _EnvOnlyLogLevelSettings()
+    assert settings.log_level is None
+
+
+def test_log_level_only_settings_from_process_env() -> None:
+    """Early log-level settings load AUTOHARNESS_LOG_LEVEL from the process env."""
+    with patch.dict(os.environ, {"AUTOHARNESS_LOG_LEVEL": "INFO"}, clear=True):
+        settings = _EnvOnlyLogLevelSettings()
+    assert settings.log_level == "INFO"
+
+
+def test_log_level_only_settings_from_env_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Early log-level settings load AUTOHARNESS_LOG_LEVEL from a .env file."""
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("AUTOHARNESS_LOG_LEVEL", raising=False)
+    (tmp_path / ".env").write_text("AUTOHARNESS_LOG_LEVEL=DEBUG\n", encoding="utf-8")
+    settings = _LogLevelOnlySettings()
+    assert settings.log_level == "DEBUG"
+
+
+def test_log_level_only_settings_rejects_invalid_level() -> None:
+    """Early log-level settings validate AUTOHARNESS_LOG_LEVEL values."""
+    with (
+        patch.dict(os.environ, {"AUTOHARNESS_LOG_LEVEL": "NOTALEVEL"}, clear=True),
+        pytest.raises(ValidationError),
+    ):
+        _EnvOnlyLogLevelSettings()

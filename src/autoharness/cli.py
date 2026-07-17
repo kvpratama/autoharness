@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import argparse
 import logging
-import os
 import sys
 from pathlib import Path
 from typing import TypedDict, cast
@@ -441,14 +440,10 @@ def main(args: list[str] | None = None) -> int:
     elif parsed.verbose:
         level = "INFO"
     else:
-        env_log_level = os.environ.get("AUTOHARNESS_LOG_LEVEL")
-        if env_log_level:
-            try:
-                level = _LogLevelOnlySettings().log_level
-            except ValidationError as exc:
-                parser.error(f"Invalid AUTOHARNESS_LOG_LEVEL: {exc}")
-        else:
-            level = None
+        try:
+            level = _LogLevelOnlySettings().log_level
+        except ValidationError as exc:
+            parser.error(f"Invalid AUTOHARNESS_LOG_LEVEL: {exc}")
 
     if level:
         level_name = level.upper()

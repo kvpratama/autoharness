@@ -62,7 +62,7 @@ class _LogLevelOnlySettings(BaseSettings):
         extra="ignore",
     )
 
-    log_level: str = "WARNING"
+    log_level: str | None = None
 
     @field_validator("log_level", mode="before")
     @classmethod

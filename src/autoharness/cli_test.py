@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
@@ -399,3 +400,54 @@ def test_main_synthesize_evaluation_failure_returns_nonzero() -> None:
         ):
             result = main()
     assert result != 0
+
+
+def test_main_configures_logging_from_settings_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    """main applies AUTOHARNESS_LOG_LEVEL via settings, not a raw os.environ gate."""
+    monkeypatch.setenv("AUTOHARNESS_LOG_LEVEL", "DEBUG")
+    with (
+        tempfile.TemporaryDirectory() as tmpdir,
+        patch("autoharness.cli.logging.basicConfig") as mock_basic_config,
+        patch("autoharness.cli.evaluate_cmd", return_value=[]),
+    ):
+        run_dir = Path(tmpdir) / "run"
+        run_dir.mkdir()
+        result = main(["evaluate", "--run", str(run_dir)])
+    assert result == 0
+    mock_basic_config.assert_called_once()
+    assert mock_basic_config.call_args.kwargs["level"] == logging.DEBUG
+
+
+def test_main_configures_logging_from_env_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """main loads AUTOHARNESS_LOG_LEVEL from .env via settings even without os.environ."""
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("AUTOHARNESS_LOG_LEVEL", raising=False)
+    (tmp_path / ".env").write_text("AUTOHARNESS_LOG_LEVEL=INFO\n", encoding="utf-8")
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    with (
+        patch("autoharness.cli.load_dotenv"),
+        patch("autoharness.cli.logging.basicConfig") as mock_basic_config,
+        patch("autoharness.cli.evaluate_cmd", return_value=[]),
+    ):
+        result = main(["evaluate", "--run", str(run_dir)])
+    assert result == 0
+    mock_basic_config.assert_called_once()
+    assert mock_basic_config.call_args.kwargs["level"] == logging.INFO
+
+
+def test_main_skips_basic_config_when_log_level_unset(monkeypatch: pytest.MonkeyPatch) -> None:
+    """main leaves logging alone when no CLI flag or AUTOHARNESS_LOG_LEVEL is set."""
+    monkeypatch.delenv("AUTOHARNESS_LOG_LEVEL", raising=False)
+    with (
+        tempfile.TemporaryDirectory() as tmpdir,
+        patch("autoharness.cli.logging.basicConfig") as mock_basic_config,
+        patch("autoharness.cli.evaluate_cmd", return_value=[]),
+    ):
+        run_dir = Path(tmpdir) / "run"
+        run_dir.mkdir()
+        result = main(["evaluate", "--run", str(run_dir)])
+    assert result == 0
+    mock_basic_config.assert_not_called()

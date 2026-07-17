@@ -64,7 +64,7 @@ class ArtifactStore:
         tmp = path.with_suffix(".tmp")
         jsonl_content = "".join(json.dumps(e, default=str) + "\n" for e in events)
         tmp.write_text(jsonl_content)
-        tmp.rename(path)
+        tmp.replace(path)
 
     def load_events(self) -> list[dict[str, Any]]:
         """Loads events from events.jsonl, ignoring malformed/interrupted lines."""
@@ -72,18 +72,15 @@ class ArtifactStore:
         if not path.exists():
             return []
         events: list[dict[str, Any]] = []
-        try:
-            content = path.read_text()
-            for line in content.splitlines():
-                line = line.strip()
-                if not line:
-                    continue
-                try:
-                    events.append(json.loads(line))
-                except json.JSONDecodeError:
-                    pass
-        except Exception:
-            pass
+        content = path.read_text()
+        for line in content.splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                events.append(json.loads(line))
+            except json.JSONDecodeError:
+                pass
         return events
 
     def write_candidate(self, candidate_id: str, source: str) -> None:

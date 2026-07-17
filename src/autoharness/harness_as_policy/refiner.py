@@ -5,8 +5,13 @@ from __future__ import annotations
 import ast
 import os
 from dataclasses import dataclass
-from typing import Protocol
+from typing import Any, Protocol
 
+import anthropic
+import httpx
+import openai
+import requests
+from google.genai import errors as google_errors
 from langchain.chat_models import init_chat_model
 from langchain_core.language_models import BaseChatModel
 from langchain_core.runnables import RunnableConfig
@@ -24,6 +29,59 @@ def _get_langfuse_handler() -> CallbackHandler | None:
     if _langfuse_handler is None:
         _langfuse_handler = CallbackHandler()
     return _langfuse_handler
+
+
+def _is_transient_error(e: Exception) -> bool:
+    """Determine if an exception is a transient transport/network/provider-specific error."""
+    if isinstance(e, (ConnectionError, TimeoutError)):
+        return True
+
+    if isinstance(e, httpx.RequestError):
+        return True
+    if isinstance(e, httpx.HTTPStatusError):
+        if e.response is not None and (
+            e.response.status_code in (429, 502, 503, 504) or e.response.status_code >= 500
+        ):
+            return True
+
+    if isinstance(e, requests.RequestException):
+        if hasattr(e, "response") and e.response is not None:
+            if e.response.status_code in (429, 502, 503, 504) or e.response.status_code >= 500:
+                return True
+        if isinstance(e, (requests.ConnectionError, requests.Timeout)):
+            return True
+
+    if isinstance(
+        e,
+        (
+            openai.APIConnectionError,
+            openai.APITimeoutError,
+            openai.RateLimitError,
+            openai.InternalServerError,
+        ),
+    ):
+        return True
+
+    if isinstance(
+        e,
+        (
+            anthropic.APIConnectionError,
+            anthropic.APITimeoutError,
+            anthropic.RateLimitError,
+            anthropic.InternalServerError,
+            anthropic.OverloadedError,
+        ),
+    ):
+        return True
+
+    if isinstance(e, google_errors.ServerError):
+        return True
+    if isinstance(e, google_errors.APIError):
+        code = getattr(e, "code", None)
+        if code == 429 or (isinstance(code, int) and code >= 500):
+            return True
+
+    return False
 
 
 @dataclass
@@ -151,7 +209,13 @@ def _has_policy_contract(source: str) -> bool:
     return {"is_legal_action", "propose_action"} <= names
 
 
-def _normalize_content(response) -> str:
+class MessageLike(Protocol):
+    """A minimal protocol for objects exposing a content attribute."""
+
+    content: Any
+
+
+def _normalize_content(response: MessageLike) -> str:
     """Extract plain text from a model response, handling content blocks.
 
     Models like Gemma 4 return content as a list of blocks
@@ -253,16 +317,18 @@ class Refiner:
         )
         # Attempt with one retry on transport error
         last_error: str | None = None
+        handler = _get_langfuse_handler()
+        config: RunnableConfig = {"callbacks": [handler]} if handler else {}
         for _ in range(2):
             try:
-                handler = _get_langfuse_handler()
-                config: RunnableConfig = {"callbacks": [handler]} if handler else {}
                 response = self._model.invoke(prompt, config=config)
                 self._model_call_count += 1
             except Exception as e:
                 self._model_call_count += 1
-                last_error = str(e)
-                continue
+                if _is_transient_error(e):
+                    last_error = str(e)
+                    continue
+                raise
             content = _normalize_content(response)
             source = _extract_source(content)
             if source and _has_policy_contract(source):

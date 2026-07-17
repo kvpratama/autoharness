@@ -354,3 +354,48 @@ def test_main_synthesize_dispatches() -> None:
             result = main()
     assert result == 0
     mock_evaluate_cmd.assert_called_once_with(Path(tmpdir) / "test")
+
+
+def test_main_evaluate_missing_best_py_returns_nonzero() -> None:
+    """main returns a nonzero status when evaluate is run and best.py is missing."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        run_dir = Path(tmpdir) / "run"
+        run_dir.mkdir()
+        with patch(
+            "sys.argv",
+            [
+                "autoharness",
+                "evaluate",
+                "--run",
+                str(run_dir),
+            ],
+        ):
+            result = main()
+    assert result != 0
+
+
+def test_main_synthesize_evaluation_failure_returns_nonzero() -> None:
+    """main returns a nonzero status when synthesize is run but evaluation fails."""
+    with (
+        tempfile.TemporaryDirectory() as tmpdir,
+        patch("autoharness.cli.Refiner"),
+        patch("autoharness.cli.synthesize") as mock_synthesize,
+        patch("autoharness.cli.evaluate_cmd") as mock_evaluate_cmd,
+    ):
+        mock_synthesize.return_value = {"run_id": "test", "artifact_root": tmpdir}
+        mock_evaluate_cmd.return_value = None
+        with patch(
+            "sys.argv",
+            [
+                "autoharness",
+                "synthesize",
+                "--env",
+                "TowerOfHanoi-v0",
+                "--model",
+                "anthropic:claude-3-opus",
+                "--artifact-root",
+                tmpdir,
+            ],
+        ):
+            result = main()
+    assert result != 0

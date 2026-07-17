@@ -44,7 +44,7 @@ def test_beta_parameters_zero() -> None:
 
 
 def test_select_candidate_deterministic() -> None:
-    """Selection with seeded RNG reproduces the same draw."""
+    """Selection with seeded RNG is deterministic and picks the highest Beta draw."""
     candidates = {
         "000": Candidate(
             id="000",
@@ -83,9 +83,30 @@ def test_select_candidate_deterministic() -> None:
             expansion_count=1,
         ),
     }
-    rng = random.Random(42)
-    selected = select_candidate(candidates, rng)
-    assert selected in candidates
+
+    # Two independent RNG instances with the same seed must produce the same selection.
+    rng_a = random.Random(42)
+    rng_b = random.Random(42)
+    selected_a = select_candidate(candidates, rng_a)
+    selected_b = select_candidate(candidates, rng_b)
+    assert selected_a == selected_b, "Same seed must yield identical selection"
+
+    # Replay the exact Beta draws to find which candidate gets the highest draw.
+    from autoharness.harness_as_policy.search import beta_parameters
+
+    rng_ref = random.Random(42)
+    draws: dict[str, float] = {}
+    for cid, cand in candidates.items():
+        a, b = beta_parameters(heuristic=cand.heuristic, children=cand.expansion_count)
+        draws[cid] = rng_ref.betavariate(a, b)
+
+    expected_winner = max(draws, key=lambda k: draws[k])
+    winner_draw = draws[expected_winner]
+    selected_draw = draws.get(selected_a, -1.0)
+    assert selected_a == expected_winner, (
+        f"Expected candidate with highest draw ({expected_winner}, draw={winner_draw:.4f}) "
+        f"but got {selected_a} (draw={selected_draw:.4f})"
+    )
 
 
 def test_find_best_candidate_empty() -> None:
@@ -274,17 +295,17 @@ class FakeRefiner:
         return RefinerResult(success=False, source=None)
 
 
-REJECTED_BY_CHECKER_SOURCE = """def propose_action(board: str) -> str:
+REJECTED_BY_CHECKER_SOURCE = """def propose_action(observation: str) -> str:
     return '[X Y]'
 
-def is_legal_action(board: str, action: str) -> bool:
+def is_legal_action(observation: str, action: str) -> bool:
     return False
 """
 
-ACCEPTED_BY_CHECKER_SOURCE = """def propose_action(board: str) -> str:
+ACCEPTED_BY_CHECKER_SOURCE = """def propose_action(observation: str) -> str:
     return '[X Y]'
 
-def is_legal_action(board: str, action: str) -> bool:
+def is_legal_action(observation: str, action: str) -> bool:
     return True
 """
 

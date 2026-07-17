@@ -171,3 +171,42 @@ def test_load_config(store: ArtifactStore) -> None:
     loaded = store.load_config()
     assert loaded is not None
     assert loaded["model"] == "test"
+
+
+def test_load_events_and_write_event_recovery(store: ArtifactStore) -> None:
+    """load_events and write_event handle an interrupted trailing event correctly."""
+    # Write a valid event
+    ev1 = Event(
+        iteration=1,
+        event_type="select",
+        candidate_id="001",
+        parent_id="000",
+        metadata={},
+    )
+    store.write_event(ev1)
+
+    # Manually append an interrupted/partially written JSON record to the file
+    path = store.run_dir / "events.jsonl"
+    with open(path, "a") as f:
+        f.write('{"iteration": 2, "event_type": "refine"\n')  # Incomplete JSON (no closing brace)
+
+    # Verify load_events filters out/ignores the malformed trailing line
+    events = store.load_events()
+    assert len(events) == 1
+    assert events[0]["iteration"] == 1
+
+    # Verify writing a new event recovers and keeps only valid events
+    ev3 = Event(
+        iteration=3,
+        event_type="rollout",
+        candidate_id="003",
+        parent_id="001",
+        metadata={},
+    )
+    store.write_event(ev3)
+
+    # Reload and confirm only the two valid events are persisted, and malformed is gone
+    final_events = store.load_events()
+    assert len(final_events) == 2
+    assert final_events[0]["iteration"] == 1
+    assert final_events[1]["iteration"] == 3

@@ -51,20 +51,40 @@ class ArtifactStore:
     def write_event(self, event: Event) -> None:
         path = self._run_dir / "events.jsonl"
         path.parent.mkdir(parents=True, exist_ok=True)
-        with open(path, "a") as f:
-            f.write(
-                json.dumps(
-                    {
-                        "iteration": event.iteration,
-                        "event_type": event.event_type,
-                        "candidate_id": event.candidate_id,
-                        "parent_id": event.parent_id,
-                        "metadata": event.metadata,
-                    },
-                    default=str,
-                )
-                + "\n"
-            )
+        events = self.load_events()
+        events.append(
+            {
+                "iteration": event.iteration,
+                "event_type": event.event_type,
+                "candidate_id": event.candidate_id,
+                "parent_id": event.parent_id,
+                "metadata": event.metadata,
+            }
+        )
+        tmp = path.with_suffix(".tmp")
+        jsonl_content = "".join(json.dumps(e, default=str) + "\n" for e in events)
+        tmp.write_text(jsonl_content)
+        tmp.rename(path)
+
+    def load_events(self) -> list[dict[str, Any]]:
+        """Loads events from events.jsonl, ignoring malformed/interrupted lines."""
+        path = self._run_dir / "events.jsonl"
+        if not path.exists():
+            return []
+        events: list[dict[str, Any]] = []
+        try:
+            content = path.read_text()
+            for line in content.splitlines():
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    events.append(json.loads(line))
+                except json.JSONDecodeError:
+                    pass
+        except Exception:
+            pass
+        return events
 
     def write_candidate(self, candidate_id: str, source: str) -> None:
         path = self._run_dir / "candidates" / f"{candidate_id}.py"

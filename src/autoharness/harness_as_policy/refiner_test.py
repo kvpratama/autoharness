@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+from typing import Any
+
+from langchain_core.callbacks import CallbackManagerForLLMRun
 from langchain_core.language_models import BaseChatModel
-from langchain_core.messages import AIMessage
+from langchain_core.messages import AIMessage, BaseMessage
 from langchain_core.outputs import ChatGeneration, ChatResult
 
 from autoharness.harness_as_policy.refiner import (
@@ -24,7 +27,13 @@ class FakeChatModel(BaseChatModel):
         super().__init__(responses=resp)
         self._call_count = 0
 
-    def _generate(self, *args, **kwargs):
+    def _generate(
+        self,
+        messages: list[BaseMessage],
+        stop: list[str] | None = None,
+        run_manager: CallbackManagerForLLMRun | None = None,
+        **kwargs: Any,
+    ) -> ChatResult:
         self._call_count += 1
         if self.responses:
             response = self.responses.pop(0)
@@ -161,7 +170,13 @@ def test_refiner_retry_on_transport_error() -> None:
             super().__init__()
             self._call_count = 0
 
-        def _generate(self, *args, **kwargs):
+        def _generate(
+            self,
+            messages: list[BaseMessage],
+            stop: list[str] | None = None,
+            run_manager: CallbackManagerForLLMRun | None = None,
+            **kwargs: Any,
+        ) -> ChatResult:
             self._call_count += 1
             if self._call_count == 1:
                 raise ConnectionError("Transport failure")
@@ -197,7 +212,13 @@ def test_refiner_double_retry_failure() -> None:
     """Refiner returns failure after two transport errors."""
 
     class AlwaysFailsModel(BaseChatModel):
-        def _generate(self, *args, **kwargs):
+        def _generate(
+            self,
+            messages: list[BaseMessage],
+            stop: list[str] | None = None,
+            run_manager: CallbackManagerForLLMRun | None = None,
+            **kwargs: Any,
+        ) -> ChatResult:
             raise ConnectionError("Always fails")
 
         @property
@@ -228,7 +249,13 @@ def test_refiner_extracts_source_from_content_blocks() -> None:
     """
 
     class ContentBlockModel(BaseChatModel):
-        def _generate(self, *args, **kwargs):
+        def _generate(
+            self,
+            messages: list[BaseMessage],
+            stop: list[str] | None = None,
+            run_manager: CallbackManagerForLLMRun | None = None,
+            **kwargs: Any,
+        ) -> ChatResult:
             msg = AIMessage(
                 content=[
                     {
@@ -285,7 +312,13 @@ def test_refiner_content_blocks_no_text_block() -> None:
     """Refiner returns failure when content blocks contain only thinking."""
 
     class ThinkingOnlyModel(BaseChatModel):
-        def _generate(self, *args, **kwargs):
+        def _generate(
+            self,
+            messages: list[BaseMessage],
+            stop: list[str] | None = None,
+            run_manager: CallbackManagerForLLMRun | None = None,
+            **kwargs: Any,
+        ) -> ChatResult:
             msg = AIMessage(
                 content=[
                     {"type": "thinking", "thinking": "I should think about this more..."},
@@ -317,7 +350,13 @@ def test_refiner_content_blocks_empty_list() -> None:
     """Refiner handles empty content block list gracefully."""
 
     class EmptyBlocksModel(BaseChatModel):
-        def _generate(self, *args, **kwargs):
+        def _generate(
+            self,
+            messages: list[BaseMessage],
+            stop: list[str] | None = None,
+            run_manager: CallbackManagerForLLMRun | None = None,
+            **kwargs: Any,
+        ) -> ChatResult:
             msg = AIMessage(content=[])
             return ChatResult(generations=[ChatGeneration(message=msg)])
 
@@ -370,3 +409,124 @@ def test_refiner_rejects_response_missing_legality_checker() -> None:
 
     assert not result.success
     assert result.error_details == "Model response did not contain both required policy functions"
+
+
+def test_refiner_propagates_programming_error() -> None:
+    """Refiner propagates standard exceptions (like ValueError) immediately."""
+    import pytest
+
+    class FailModel(BaseChatModel):
+        def _generate(
+            self,
+            messages: list[BaseMessage],
+            stop: list[str] | None = None,
+            run_manager: CallbackManagerForLLMRun | None = None,
+            **kwargs: Any,
+        ) -> ChatResult:
+            raise ValueError("Programming error")
+
+        @property
+        def _llm_type(self) -> str:
+            return "fail"
+
+    model = FailModel()
+    refiner = Refiner(model=model)
+    with pytest.raises(ValueError, match="Programming error"):
+        refiner.refine(
+            rules="Rules",
+            action_format="[A C]",
+            parent_source="old",
+            parent_heuristic=0.0,
+            parent_reward=0.0,
+            parent_legal_actions=0,
+            parent_status="contract_failure",
+            feedback=[],
+            refine_legal_action=True,
+        )
+    assert refiner.model_call_count == 1
+
+
+def test_refiner_propagates_openai_auth_error() -> None:
+    """Refiner propagates non-transient provider exceptions immediately."""
+    import httpx
+    import openai
+    import pytest
+
+    class AuthFailModel(BaseChatModel):
+        def _generate(
+            self,
+            messages: list[BaseMessage],
+            stop: list[str] | None = None,
+            run_manager: CallbackManagerForLLMRun | None = None,
+            **kwargs: Any,
+        ) -> ChatResult:
+            req = httpx.Request("POST", "http://test")
+            res = httpx.Response(401, request=req)
+            raise openai.AuthenticationError("Auth failed", response=res, body=None)
+
+        @property
+        def _llm_type(self) -> str:
+            return "auth_fail"
+
+    model = AuthFailModel()
+    refiner = Refiner(model=model)
+    with pytest.raises(openai.AuthenticationError, match="Auth failed"):
+        refiner.refine(
+            rules="Rules",
+            action_format="[A C]",
+            parent_source="old",
+            parent_heuristic=0.0,
+            parent_reward=0.0,
+            parent_legal_actions=0,
+            parent_status="contract_failure",
+            feedback=[],
+            refine_legal_action=True,
+        )
+    assert refiner.model_call_count == 1
+
+
+def test_refiner_retries_transient_openai_error() -> None:
+    """Refiner retries transient provider errors (like RateLimitError)."""
+    import httpx
+    import openai
+
+    class RateLimitModel(BaseChatModel):
+        def __init__(self) -> None:
+            super().__init__()
+            self._attempts = 0
+
+        def _generate(
+            self,
+            messages: list[BaseMessage],
+            stop: list[str] | None = None,
+            run_manager: CallbackManagerForLLMRun | None = None,
+            **kwargs: Any,
+        ) -> ChatResult:
+            self._attempts += 1
+            if self._attempts == 1:
+                req = httpx.Request("POST", "http://test")
+                res = httpx.Response(429, request=req)
+                raise openai.RateLimitError("Rate limit exceeded", response=res, body=None)
+            msg = AIMessage(content=COMPLETE_SOURCE)
+            return ChatResult(generations=[ChatGeneration(message=msg)])
+
+        @property
+        def _llm_type(self) -> str:
+            return "rate_limit"
+
+    model = RateLimitModel()
+    refiner = Refiner(model=model)
+    result = refiner.refine(
+        rules="Rules",
+        action_format="[A C]",
+        parent_source="old",
+        parent_heuristic=0.0,
+        parent_reward=0.0,
+        parent_legal_actions=0,
+        parent_status="contract_failure",
+        feedback=[],
+        refine_legal_action=True,
+    )
+    assert result.success
+    assert model._attempts == 2
+    assert refiner.model_call_count == 2

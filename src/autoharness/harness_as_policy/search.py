@@ -99,10 +99,10 @@ def should_stop(
     return None
 
 
-ROOT_SOURCE = """def propose_action(board: str) -> str:
+ROOT_SOURCE = """def propose_action(observation: str) -> str:
     raise NotImplementedError("Root policy — replace me")
 
-def is_legal_action(board: str, action: str) -> bool:
+def is_legal_action(observation: str, action: str) -> bool:
     raise NotImplementedError("Root legality checker — replace me")
 """
 
@@ -404,7 +404,7 @@ def synthesize(
 
     summary = {
         "run_id": run_id,
-        "artifact_root": artifact_root,
+        "artifact_root": str(artifact_root),
         "stop_reason": stop_reason,
         "best_candidate_id": best_id,
         "total_candidates": len(candidates),

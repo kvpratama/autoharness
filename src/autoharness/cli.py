@@ -7,12 +7,14 @@ import logging
 import os
 import sys
 from pathlib import Path
-from typing import Any
+from typing import TypedDict, cast
 
 from dotenv import load_dotenv
+from pydantic import ValidationError
 
-from autoharness.harness_as_policy.config import Settings
+from autoharness.harness_as_policy.config import Settings, _LogLevelOnlySettings
 from autoharness.harness_as_policy.evaluation import (
+    EvaluationResult,
     evaluate_policy,
     format_evaluation_summary,
 )
@@ -24,6 +26,33 @@ from autoharness.harness_as_policy.tower_of_hanoi import (
     DIFFICULTY_MAP,
     TowerOfHanoiAdapter,
 )
+
+
+class SettingsKwargs(TypedDict, total=False):
+    """Keyword arguments to construct Settings."""
+
+    env_id: str
+    profile: str
+    model: str
+    refinements: int
+    artifact_root: str
+    thompson_seed: int
+    execution_timeout: int
+    max_source_size: int
+
+
+class SynthesisResult(TypedDict):
+    """The result of a policy synthesis run."""
+
+    run_id: str
+    artifact_root: Path | str
+    stop_reason: str
+    best_candidate_id: str | None
+    total_candidates: int
+    iterations_used: int
+    profile: str
+    model_call_count: int
+    logical_refinement_count: int
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -139,13 +168,13 @@ _ENV_TO_DIFFICULTY: dict[str, str] = {
 
 def synthesize_cmd(
     args: argparse.Namespace | None = None,
-) -> dict[str, Any]:
+) -> SynthesisResult:
     """Run the synthesize command."""
     parser = _build_parser()
     if args is None:
         args, _ = parser.parse_known_args()
 
-    settings_kwargs: dict[str, Any] = {}
+    settings_kwargs: SettingsKwargs = {}
     if args.env:
         settings_kwargs["env_id"] = args.env
     if args.profile:
@@ -188,10 +217,10 @@ def synthesize_cmd(
     print(f"Best candidate: {result.get('best_candidate_id', 'none')}")
     print(f"Total candidates: {result.get('total_candidates', 0)}")
     print(f"Model calls: {result.get('model_call_count', 0)}")
-    return result
+    return cast(SynthesisResult, result)
 
 
-def evaluate_cmd(run_dir: Path) -> list[Any] | None:
+def evaluate_cmd(run_dir: Path) -> list[EvaluationResult] | None:
     """Run the evaluate command."""
     best_policy_path = run_dir / "best.py"
     if not best_policy_path.exists():
@@ -235,12 +264,9 @@ def evaluate_baseline_cmd(
     model_id: str,
     input_price: float | None = None,
     output_price: float | None = None,
-) -> list[Any] | None:
+) -> list[EvaluationResult] | None:
     """Run the live-LLM baseline evaluate command."""
     import time
-
-    from autoharness.harness_as_policy.evaluation import EvaluationResult
-    from autoharness.harness_as_policy.tower_of_hanoi import DIFFICULTY_MAP
 
     results: list[EvaluationResult] = []
     total_model_calls = 0
@@ -257,7 +283,7 @@ def evaluate_baseline_cmd(
         )
         try:
             adapter.create()
-            adapter.reset()
+            observation = adapter.reset()
         except Exception as e:
             results.append(
                 EvaluationResult(
@@ -279,7 +305,7 @@ def evaluate_baseline_cmd(
         solved = False
         reward = 0.0
         steps_used = 0
-        observation = adapter._observation if hasattr(adapter, "_observation") else ""
+
         for _ in range(adapter.max_steps):
             steps_used += 1
             action_result = live_policy.act(
@@ -415,11 +441,24 @@ def main(args: list[str] | None = None) -> int:
     elif parsed.verbose:
         level = "INFO"
     else:
-        level = os.environ.get("AUTOHARNESS_LOG_LEVEL")
+        env_log_level = os.environ.get("AUTOHARNESS_LOG_LEVEL")
+        if env_log_level:
+            try:
+                level = _LogLevelOnlySettings().log_level
+            except ValidationError as exc:
+                parser.error(f"Invalid AUTOHARNESS_LOG_LEVEL: {exc}")
+        else:
+            level = None
 
     if level:
+        level_name = level.upper()
+        level_value = getattr(logging, level_name, None)
+        if not isinstance(level_value, int):
+            parser.error(
+                f"Invalid log level {level!r}. Valid levels: DEBUG, INFO, WARNING, ERROR, CRITICAL"
+            )
         logging.basicConfig(
-            level=getattr(logging, level.upper()),
+            level=level_value,
             format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
             stream=sys.stderr,
             force=True,
@@ -429,9 +468,13 @@ def main(args: list[str] | None = None) -> int:
         summary = synthesize_cmd(parsed)
         run_id = summary["run_id"]
         artifact_root = summary["artifact_root"]
-        evaluate_cmd(Path(f"{artifact_root}/{run_id}"))
+        results = evaluate_cmd(Path(f"{artifact_root}/{run_id}"))
+        if results is None:
+            return 1
     elif parsed.command == "evaluate":
-        evaluate_cmd(parsed.run)
+        results = evaluate_cmd(parsed.run)
+        if results is None:
+            return 1
     elif parsed.command == "evaluate-baseline":
         evaluate_baseline_cmd(parsed.run, parsed.model, parsed.input_price, parsed.output_price)
     return 0

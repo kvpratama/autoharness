@@ -36,7 +36,6 @@ The main package is `autoharness`; the active implementation lives under
 .
 ├── AGENTS.md
 ├── README.md
-├── main.py / main_test.py              # starter "Hello World" entry point and test
 ├── playground.py                       # manual Langfuse/refiner debugging script
 ├── pyproject.toml                      # package metadata, scripts, Ruff, pytest config
 ├── artifacts/                          # generated synthesis/evaluation outputs

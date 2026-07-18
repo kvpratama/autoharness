@@ -295,7 +295,7 @@ def test_should_stop_not_yet() -> None:
 def test_synthesize_empty_policies() -> None:
     """Blank policies remain in the tree but are excluded from final ranking."""
     with tempfile.TemporaryDirectory() as tmpdir:
-        refiner: RefinerProtocol = FakeRefiner(responses=[""])
+        refiner: RefinerProtocol = FakeRefiner(responses=["   "])
         result = synthesize(
             adapter=FakeAdapter(),
             profile=Profile.SMOKE,
@@ -366,6 +366,7 @@ def test_synthesize_persists_order_matching_find_best_candidate() -> None:
         {"component": "iteration", "direction": "ascending"},
     ]
     assert tree["candidates"]["001"]["parent_id"] == "000"
+    assert tree["candidates"]["002"]["parent_id"] == "001"
     assert tree["candidates"]["001"]["ranking"]["components"] == {
         "heuristic": 0.5,
         "reward": 0.0,
@@ -405,6 +406,75 @@ def test_synthesize_explains_single_eligible_candidate() -> None:
         "winner_value": None,
         "runner_up_value": None,
     }
+
+
+def test_winner_explanation_matches_each_ranking_component() -> None:
+    """Winner explanations follow CandidateRankKey precedence for every component."""
+    cases = [
+        (
+            "heuristic",
+            Candidate("winner", None, "policy", 0.6, 0.0, 3, TerminationReason.STEP_LIMIT, None, 1),
+            Candidate("runner", None, "policy", 0.5, 0.0, 3, TerminationReason.STEP_LIMIT, None, 1),
+            [],
+            0.6,
+            0.5,
+        ),
+        (
+            "reward",
+            Candidate("winner", None, "policy", 0.5, 0.5, 3, TerminationReason.STEP_LIMIT, None, 1),
+            Candidate("runner", None, "policy", 0.5, 0.0, 3, TerminationReason.STEP_LIMIT, None, 1),
+            ["heuristic"],
+            0.5,
+            0.0,
+        ),
+        (
+            "legal_actions",
+            Candidate("winner", None, "policy", 0.5, 0.0, 4, TerminationReason.STEP_LIMIT, None, 1),
+            Candidate("runner", None, "policy", 0.5, 0.0, 3, TerminationReason.STEP_LIMIT, None, 1),
+            ["heuristic", "reward"],
+            4,
+            3,
+        ),
+        (
+            "failures",
+            Candidate("winner", None, "policy", 0.5, 0.0, 3, TerminationReason.STEP_LIMIT, None, 1),
+            Candidate(
+                "runner",
+                None,
+                "policy",
+                0.5,
+                0.0,
+                3,
+                TerminationReason.EXECUTION_FAILURE,
+                "failed",
+                1,
+            ),
+            ["heuristic", "reward", "legal_actions"],
+            0,
+            1,
+        ),
+        (
+            "iteration",
+            Candidate("winner", None, "policy", 0.5, 0.0, 3, TerminationReason.STEP_LIMIT, None, 1),
+            Candidate("runner", None, "policy", 0.5, 0.0, 3, TerminationReason.STEP_LIMIT, None, 2),
+            ["heuristic", "reward", "legal_actions", "failures"],
+            1,
+            2,
+        ),
+    ]
+
+    for component, winner, runner_up, tied_components, winner_value, runner_up_value in cases:
+        candidates = {"winner": winner, "runner": runner_up}
+        ordered_candidate_ids = rank_candidates(candidates)
+        explanation = _winner_explanation(candidates, ordered_candidate_ids)
+
+        assert ordered_candidate_ids == ["winner", "runner"]
+        assert explanation is not None
+        assert explanation["outcome"] == "decisive_component"
+        assert explanation["decisive_component"] == component
+        assert explanation["tied_components"] == tied_components
+        assert explanation["winner_value"] == winner_value
+        assert explanation["runner_up_value"] == runner_up_value
 
 
 def test_winner_explanation_records_exact_key_tie() -> None:

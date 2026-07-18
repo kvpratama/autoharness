@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import random
 import tempfile
 from pathlib import Path
@@ -14,8 +15,10 @@ from autoharness.harness_as_policy.models import (
 )
 from autoharness.harness_as_policy.refiner import RefinerProtocol, RefinerResult
 from autoharness.harness_as_policy.search import (
+    _winner_explanation,
     beta_parameters,
     find_best_candidate,
+    rank_candidates,
     select_candidate,
     should_stop,
     synthesize,
@@ -174,6 +177,87 @@ def test_find_best_candidate_lexicographic() -> None:
     assert find_best_candidate(candidates) == "002"
 
 
+def test_rank_candidates_returns_complete_lexicographic_order() -> None:
+    """Candidate ordering exposes the complete best-to-worst rank."""
+    candidates = {
+        "reward": Candidate(
+            id="reward",
+            parent_id=None,
+            source="policy",
+            heuristic=0.5,
+            terminal_reward=0.5,
+            legal_action_count=1,
+            termination_reason=TerminationReason.STEP_LIMIT,
+            failure_summary=None,
+            iteration=4,
+        ),
+        "earlier": Candidate(
+            id="earlier",
+            parent_id=None,
+            source="policy",
+            heuristic=0.5,
+            terminal_reward=0.0,
+            legal_action_count=3,
+            termination_reason=TerminationReason.STEP_LIMIT,
+            failure_summary=None,
+            iteration=1,
+        ),
+        "failure": Candidate(
+            id="failure",
+            parent_id=None,
+            source="policy",
+            heuristic=0.5,
+            terminal_reward=0.0,
+            legal_action_count=3,
+            termination_reason=TerminationReason.EXECUTION_FAILURE,
+            failure_summary="failed",
+            iteration=2,
+        ),
+        "later": Candidate(
+            id="later",
+            parent_id=None,
+            source="policy",
+            heuristic=0.5,
+            terminal_reward=0.0,
+            legal_action_count=3,
+            termination_reason=TerminationReason.STEP_LIMIT,
+            failure_summary=None,
+            iteration=3,
+        ),
+    }
+
+    assert rank_candidates(candidates) == ["reward", "earlier", "later", "failure"]
+    assert find_best_candidate(candidates) == "reward"
+
+
+def test_rank_candidates_preserves_input_order_for_equal_keys() -> None:
+    """Exact rank-key ties retain stable candidate input order."""
+    first = Candidate(
+        id="first",
+        parent_id=None,
+        source="policy",
+        heuristic=0.5,
+        terminal_reward=0.0,
+        legal_action_count=3,
+        termination_reason=TerminationReason.STEP_LIMIT,
+        failure_summary=None,
+        iteration=1,
+    )
+    second = Candidate(
+        id="second",
+        parent_id=None,
+        source="policy",
+        heuristic=0.5,
+        terminal_reward=0.0,
+        legal_action_count=3,
+        termination_reason=TerminationReason.STEP_LIMIT,
+        failure_summary=None,
+        iteration=1,
+    )
+
+    assert rank_candidates({"first": first, "second": second}) == ["first", "second"]
+
+
 def test_should_stop_success() -> None:
     """Should stop when any candidate has H=1.0."""
     candidates = {
@@ -209,7 +293,7 @@ def test_should_stop_not_yet() -> None:
 
 
 def test_synthesize_empty_policies() -> None:
-    """synthesize with only root and one failed refinement returns summary."""
+    """Blank policies remain in the tree but are excluded from final ranking."""
     with tempfile.TemporaryDirectory() as tmpdir:
         refiner: RefinerProtocol = FakeRefiner(responses=[""])
         result = synthesize(
@@ -219,10 +303,142 @@ def test_synthesize_empty_policies() -> None:
             artifact_root=Path(tmpdir),
             seed=42,
         )
-    assert result["stop_reason"] is not None
-    assert "iterations_used" in result
-    assert "best_candidate_id" in result
-    assert "total_candidates" in result
+        tree = json.loads((Path(tmpdir) / result["run_id"] / "tree.json").read_text())
+
+    assert tree["candidates"]["000"]["ranking"] == {
+        "eligible": False,
+        "exclusion_reason": "synthetic_root",
+        "components": None,
+    }
+    assert tree["candidates"]["001"]["ranking"] == {
+        "eligible": False,
+        "exclusion_reason": "empty_source",
+        "components": None,
+    }
+    assert tree["ranking"]["ordered_candidate_ids"] == []
+    assert tree["ranking"]["winner_explanation"] is None
+    assert tree["best_candidate_id"] is None
+
+
+def test_synthesize_persists_order_matching_find_best_candidate() -> None:
+    """Persisted ranking exactly matches final candidate selection."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        result = synthesize(
+            adapter=FakeAdapter(),
+            profile=Profile.SMOKE,
+            refiner=FakeRefiner(responses=[ACCEPTED_BY_CHECKER_SOURCE, ACCEPTED_BY_CHECKER_SOURCE]),
+            artifact_root=Path(tmpdir),
+            refinements=2,
+        )
+        tree = json.loads((Path(tmpdir) / result["run_id"] / "tree.json").read_text())
+
+    reconstructed_candidates = {
+        candidate_id: Candidate(
+            id=data["id"],
+            parent_id=data["parent_id"],
+            source="persisted-policy",
+            heuristic=data["heuristic"],
+            terminal_reward=data["terminal_reward"],
+            legal_action_count=data["legal_action_count"],
+            termination_reason=(
+                TerminationReason(data["termination_reason"])
+                if data["termination_reason"]
+                else None
+            ),
+            failure_summary=data["failure_summary"],
+            iteration=data["iteration"],
+            expansion_count=data["expansion_count"],
+        )
+        for candidate_id, data in tree["candidates"].items()
+        if data["ranking"]["eligible"]
+    }
+    persisted_order = tree["ranking"]["ordered_candidate_ids"]
+
+    assert persisted_order == rank_candidates(reconstructed_candidates)
+    assert persisted_order[0] == find_best_candidate(reconstructed_candidates)
+    assert tree["best_candidate_id"] == persisted_order[0]
+    assert tree["ranking"]["strategy"] == "candidate_rank_key_v1"
+    assert tree["ranking"]["policy"] == [
+        {"component": "heuristic", "direction": "descending"},
+        {"component": "reward", "direction": "descending"},
+        {"component": "legal_actions", "direction": "descending"},
+        {"component": "failures", "direction": "ascending"},
+        {"component": "iteration", "direction": "ascending"},
+    ]
+    assert tree["candidates"]["001"]["parent_id"] == "000"
+    assert tree["candidates"]["001"]["ranking"]["components"] == {
+        "heuristic": 0.5,
+        "reward": 0.0,
+        "legal_actions": 10,
+        "failures": 0,
+        "iteration": 1,
+    }
+    assert tree["ranking"]["winner_explanation"] == {
+        "winner_id": "001",
+        "runner_up_id": "002",
+        "outcome": "decisive_component",
+        "tied_components": ["heuristic", "reward", "legal_actions", "failures"],
+        "decisive_component": "iteration",
+        "winner_value": 1,
+        "runner_up_value": 2,
+    }
+
+
+def test_synthesize_explains_single_eligible_candidate() -> None:
+    """A sole ranked policy records why no comparison was needed."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        result = synthesize(
+            adapter=FakeAdapter(),
+            profile=Profile.SMOKE,
+            refiner=FakeRefiner(responses=[ACCEPTED_BY_CHECKER_SOURCE]),
+            artifact_root=Path(tmpdir),
+            refinements=1,
+        )
+        tree = json.loads((Path(tmpdir) / result["run_id"] / "tree.json").read_text())
+
+    assert tree["ranking"]["winner_explanation"] == {
+        "winner_id": "001",
+        "runner_up_id": None,
+        "outcome": "only_eligible_candidate",
+        "tied_components": [],
+        "decisive_component": None,
+        "winner_value": None,
+        "runner_up_value": None,
+    }
+
+
+def test_winner_explanation_records_exact_key_tie() -> None:
+    """A complete key tie records stable input order as the deciding rule."""
+    candidates = {
+        candidate_id: Candidate(
+            id=candidate_id,
+            parent_id=None,
+            source="policy",
+            heuristic=0.5,
+            terminal_reward=0.0,
+            legal_action_count=3,
+            termination_reason=TerminationReason.STEP_LIMIT,
+            failure_summary=None,
+            iteration=1,
+        )
+        for candidate_id in ("first", "second")
+    }
+
+    assert _winner_explanation(candidates, ["first", "second"]) == {
+        "winner_id": "first",
+        "runner_up_id": "second",
+        "outcome": "exact_key_tie",
+        "tied_components": [
+            "heuristic",
+            "reward",
+            "legal_actions",
+            "failures",
+            "iteration",
+        ],
+        "decisive_component": None,
+        "winner_value": None,
+        "runner_up_value": None,
+    }
 
 
 class FakeAdapter:

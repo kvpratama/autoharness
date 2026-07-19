@@ -9,12 +9,14 @@ from pathlib import Path
 
 from autoharness.harness_as_policy.models import (
     Candidate,
+    CandidateRankKey,
     Profile,
     StepResult,
     TerminationReason,
 )
 from autoharness.harness_as_policy.refiner import RefinerProtocol, RefinerResult
 from autoharness.harness_as_policy.search import (
+    RANKING_POLICY,
     _winner_explanation,
     beta_parameters,
     find_best_candidate,
@@ -44,6 +46,44 @@ def test_beta_parameters_zero() -> None:
     a, b = beta_parameters(heuristic=0.0, children=0, weight=1.0)
     assert abs(a - 1.0) < 1e-10
     assert abs(b - 2.0) < 1e-10
+
+
+def test_ranking_policy_matches_candidate_rank_key_order() -> None:
+    """Documented ranking precedence and directions match the executable rank key."""
+    expected_policy = (
+        ("heuristic", "descending"),
+        ("reward", "descending"),
+        ("legal_actions", "descending"),
+        ("failures", "ascending"),
+        ("iteration", "ascending"),
+    )
+    comparison_cases = (
+        (
+            CandidateRankKey(0.6, 0.0, 0, 1, 2),
+            CandidateRankKey(0.5, 1.0, 10, 0, 1),
+        ),
+        (
+            CandidateRankKey(0.5, 0.6, 0, 1, 2),
+            CandidateRankKey(0.5, 0.5, 10, 0, 1),
+        ),
+        (
+            CandidateRankKey(0.5, 0.5, 6, 1, 2),
+            CandidateRankKey(0.5, 0.5, 5, 0, 1),
+        ),
+        (
+            CandidateRankKey(0.5, 0.5, 5, 0, 2),
+            CandidateRankKey(0.5, 0.5, 5, 1, 1),
+        ),
+        (
+            CandidateRankKey(0.5, 0.5, 5, 0, 1),
+            CandidateRankKey(0.5, 0.5, 5, 0, 2),
+        ),
+    )
+
+    assert RANKING_POLICY == expected_policy
+    assert len(comparison_cases) == len(expected_policy)
+    for better, worse in comparison_cases:
+        assert better > worse
 
 
 def test_select_candidate_deterministic() -> None:
@@ -303,7 +343,8 @@ def test_synthesize_empty_policies() -> None:
             artifact_root=Path(tmpdir),
             seed=42,
         )
-        tree = json.loads((Path(tmpdir) / result["run_id"] / "tree.json").read_text())
+        tree_path = Path(tmpdir) / result["run_id"] / "tree.json"
+        tree = json.loads(tree_path.read_text())
 
     assert tree["candidates"]["000"]["ranking"] == {
         "eligible": False,
@@ -330,7 +371,8 @@ def test_synthesize_persists_order_matching_find_best_candidate() -> None:
             artifact_root=Path(tmpdir),
             refinements=2,
         )
-        tree = json.loads((Path(tmpdir) / result["run_id"] / "tree.json").read_text())
+        tree_path = Path(tmpdir) / result["run_id"] / "tree.json"
+        tree = json.loads(tree_path.read_text())
 
     reconstructed_candidates = {
         candidate_id: Candidate(
@@ -413,8 +455,28 @@ def test_winner_explanation_matches_each_ranking_component() -> None:
     cases = [
         (
             "heuristic",
-            Candidate("winner", None, "policy", 0.6, 0.0, 3, TerminationReason.STEP_LIMIT, None, 1),
-            Candidate("runner", None, "policy", 0.5, 0.0, 3, TerminationReason.STEP_LIMIT, None, 1),
+            Candidate(
+                "winner",
+                None,
+                "policy",
+                0.6,
+                0.0,
+                3,
+                TerminationReason.STEP_LIMIT,
+                None,
+                1,
+            ),
+            Candidate(
+                "runner",
+                None,
+                "policy",
+                0.5,
+                0.0,
+                3,
+                TerminationReason.STEP_LIMIT,
+                None,
+                1,
+            ),
             [],
             0.6,
             0.5,

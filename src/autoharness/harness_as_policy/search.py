@@ -7,7 +7,7 @@ import random
 import uuid
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal, TypedDict
 
 from autoharness.harness_as_policy.artifacts import ArtifactStore
 from autoharness.harness_as_policy.environment import EnvironmentAdapter
@@ -25,7 +25,55 @@ from autoharness.harness_as_policy.rollout import RolloutEvaluator
 
 logger = logging.getLogger(__name__)
 
-RANKING_POLICY: tuple[tuple[str, str], ...] = (
+ROOT_ID = "000"
+
+_RankingComponent = Literal["heuristic", "reward", "legal_actions", "failures", "iteration"]
+_RankingDirection = Literal["ascending", "descending"]
+_RankingExclusionReason = Literal["synthetic_root", "empty_source"]
+_WinnerOutcome = Literal[
+    "only_eligible_candidate",
+    "decisive_component",
+    "exact_key_tie",
+]
+
+
+class _RankingComponents(TypedDict):
+    heuristic: float
+    reward: float
+    legal_actions: int
+    failures: int
+    iteration: int
+
+
+class _CandidateRankingArtifact(TypedDict):
+    eligible: bool
+    exclusion_reason: _RankingExclusionReason | None
+    components: _RankingComponents | None
+
+
+class _RankingPolicyEntry(TypedDict):
+    component: _RankingComponent
+    direction: _RankingDirection
+
+
+class _WinnerExplanation(TypedDict):
+    winner_id: str
+    runner_up_id: str | None
+    outcome: _WinnerOutcome
+    tied_components: list[_RankingComponent]
+    decisive_component: _RankingComponent | None
+    winner_value: float | int | None
+    runner_up_value: float | int | None
+
+
+class _RankingArtifact(TypedDict):
+    strategy: Literal["candidate_rank_key_v1"]
+    policy: list[_RankingPolicyEntry]
+    ordered_candidate_ids: list[str]
+    winner_explanation: _WinnerExplanation | None
+
+
+RANKING_POLICY: tuple[tuple[_RankingComponent, _RankingDirection], ...] = (
     ("heuristic", "descending"),
     ("reward", "descending"),
     ("legal_actions", "descending"),
@@ -34,15 +82,18 @@ RANKING_POLICY: tuple[tuple[str, str], ...] = (
 )
 
 
-def _ranking_exclusion_reason(candidate_id: str, candidate: Candidate) -> str | None:
-    if candidate_id == "000":
+def _ranking_exclusion_reason(
+    candidate_id: str,
+    candidate: Candidate,
+) -> _RankingExclusionReason | None:
+    if candidate_id == ROOT_ID:
         return "synthetic_root"
     if not candidate.source.strip():
         return "empty_source"
     return None
 
 
-def _ranking_components(candidate: Candidate) -> dict[str, float | int]:
+def _ranking_components(candidate: Candidate) -> _RankingComponents:
     key = CandidateRankKey.from_candidate(candidate)
     return {
         "heuristic": key.heuristic,
@@ -53,7 +104,10 @@ def _ranking_components(candidate: Candidate) -> dict[str, float | int]:
     }
 
 
-def _candidate_ranking_artifact(candidate_id: str, candidate: Candidate) -> dict[str, Any]:
+def _candidate_ranking_artifact(
+    candidate_id: str,
+    candidate: Candidate,
+) -> _CandidateRankingArtifact:
     exclusion_reason = _ranking_exclusion_reason(candidate_id, candidate)
     return {
         "eligible": exclusion_reason is None,
@@ -65,7 +119,7 @@ def _candidate_ranking_artifact(candidate_id: str, candidate: Candidate) -> dict
 def _winner_explanation(
     candidates: dict[str, Candidate],
     ordered_candidate_ids: list[str],
-) -> dict[str, Any] | None:
+) -> _WinnerExplanation | None:
     if not ordered_candidate_ids:
         return None
 
@@ -84,7 +138,7 @@ def _winner_explanation(
     runner_up_id = ordered_candidate_ids[1]
     winner_components = _ranking_components(candidates[winner_id])
     runner_up_components = _ranking_components(candidates[runner_up_id])
-    tied_components: list[str] = []
+    tied_components: list[_RankingComponent] = []
     for component, _direction in RANKING_POLICY:
         winner_value = winner_components[component]
         runner_up_value = runner_up_components[component]
@@ -114,7 +168,7 @@ def _winner_explanation(
 def _ranking_artifact(
     candidates: dict[str, Candidate],
     ordered_candidate_ids: list[str],
-) -> dict[str, Any]:
+) -> _RankingArtifact:
     return {
         "strategy": "candidate_rank_key_v1",
         "policy": [
@@ -264,7 +318,7 @@ def synthesize(
     )
 
     root = Candidate(
-        id="000",
+        id=ROOT_ID,
         parent_id=None,
         source=ROOT_SOURCE,
         heuristic=0.0,
@@ -275,8 +329,8 @@ def synthesize(
         iteration=0,
         expansion_count=0,
     )
-    candidates: dict[str, Candidate] = {"000": root}
-    store.write_candidate("000", ROOT_SOURCE)
+    candidates: dict[str, Candidate] = {ROOT_ID: root}
+    store.write_candidate(ROOT_ID, ROOT_SOURCE)
 
     stop_reason: str | None = None
     model_call_count = 0

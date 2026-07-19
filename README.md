@@ -51,6 +51,7 @@ environment variable expected by that provider package.
 
 ```bash
 uv run autoharness synthesize \
+  --verbose \
   --env TowerOfHanoi-v0 \
   --model <provider>:<model-id> \
   --profile smoke

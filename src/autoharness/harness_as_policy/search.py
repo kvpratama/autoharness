@@ -7,7 +7,7 @@ import random
 import uuid
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal, TypedDict
 
 from autoharness.harness_as_policy.artifacts import ArtifactStore
 from autoharness.harness_as_policy.environment import EnvironmentAdapter
@@ -24,6 +24,160 @@ from autoharness.harness_as_policy.refiner import RefinerProtocol
 from autoharness.harness_as_policy.rollout import RolloutEvaluator
 
 logger = logging.getLogger(__name__)
+
+ROOT_ID = "000"
+
+_RankingComponent = Literal["heuristic", "reward", "legal_actions", "failures", "iteration"]
+_RankingDirection = Literal["ascending", "descending"]
+_RankingExclusionReason = Literal["synthetic_root", "empty_source"]
+_WinnerOutcome = Literal[
+    "only_eligible_candidate",
+    "decisive_component",
+    "exact_key_tie",
+]
+
+
+class _RankingComponents(TypedDict):
+    heuristic: float
+    reward: float
+    legal_actions: int
+    failures: int
+    iteration: int
+
+
+class _CandidateRankingArtifact(TypedDict):
+    eligible: bool
+    exclusion_reason: _RankingExclusionReason | None
+    components: _RankingComponents | None
+
+
+class _RankingPolicyEntry(TypedDict):
+    component: _RankingComponent
+    direction: _RankingDirection
+
+
+class _WinnerExplanation(TypedDict):
+    winner_id: str
+    runner_up_id: str | None
+    outcome: _WinnerOutcome
+    tied_components: list[_RankingComponent]
+    decisive_component: _RankingComponent | None
+    winner_value: float | int | None
+    runner_up_value: float | int | None
+
+
+class _RankingArtifact(TypedDict):
+    strategy: Literal["candidate_rank_key_v1"]
+    policy: list[_RankingPolicyEntry]
+    ordered_candidate_ids: list[str]
+    winner_explanation: _WinnerExplanation | None
+
+
+RANKING_POLICY: tuple[tuple[_RankingComponent, _RankingDirection], ...] = (
+    ("heuristic", "descending"),
+    ("reward", "descending"),
+    ("legal_actions", "descending"),
+    ("failures", "ascending"),
+    ("iteration", "ascending"),
+)
+
+
+def _ranking_exclusion_reason(
+    candidate_id: str,
+    candidate: Candidate,
+) -> _RankingExclusionReason | None:
+    if candidate_id == ROOT_ID:
+        return "synthetic_root"
+    if not candidate.source.strip():
+        return "empty_source"
+    return None
+
+
+def _ranking_components(candidate: Candidate) -> _RankingComponents:
+    key = CandidateRankKey.from_candidate(candidate)
+    return {
+        "heuristic": key.heuristic,
+        "reward": key.reward,
+        "legal_actions": key.legal_actions,
+        "failures": key.failures,
+        "iteration": key.iteration,
+    }
+
+
+def _candidate_ranking_artifact(
+    candidate_id: str,
+    candidate: Candidate,
+) -> _CandidateRankingArtifact:
+    exclusion_reason = _ranking_exclusion_reason(candidate_id, candidate)
+    return {
+        "eligible": exclusion_reason is None,
+        "exclusion_reason": exclusion_reason,
+        "components": _ranking_components(candidate) if exclusion_reason is None else None,
+    }
+
+
+def _winner_explanation(
+    candidates: dict[str, Candidate],
+    ordered_candidate_ids: list[str],
+) -> _WinnerExplanation | None:
+    if not ordered_candidate_ids:
+        return None
+
+    winner_id = ordered_candidate_ids[0]
+    if len(ordered_candidate_ids) == 1:
+        return {
+            "winner_id": winner_id,
+            "runner_up_id": None,
+            "outcome": "only_eligible_candidate",
+            "tied_components": [],
+            "decisive_component": None,
+            "winner_value": None,
+            "runner_up_value": None,
+        }
+
+    runner_up_id = ordered_candidate_ids[1]
+    winner_components = _ranking_components(candidates[winner_id])
+    runner_up_components = _ranking_components(candidates[runner_up_id])
+    tied_components: list[_RankingComponent] = []
+    for component, _direction in RANKING_POLICY:
+        winner_value = winner_components[component]
+        runner_up_value = runner_up_components[component]
+        if winner_value != runner_up_value:
+            return {
+                "winner_id": winner_id,
+                "runner_up_id": runner_up_id,
+                "outcome": "decisive_component",
+                "tied_components": tied_components,
+                "decisive_component": component,
+                "winner_value": winner_value,
+                "runner_up_value": runner_up_value,
+            }
+        tied_components.append(component)
+
+    return {
+        "winner_id": winner_id,
+        "runner_up_id": runner_up_id,
+        "outcome": "exact_key_tie",
+        "tied_components": tied_components,
+        "decisive_component": None,
+        "winner_value": None,
+        "runner_up_value": None,
+    }
+
+
+def _ranking_artifact(
+    candidates: dict[str, Candidate],
+    ordered_candidate_ids: list[str],
+) -> _RankingArtifact:
+    return {
+        "strategy": "candidate_rank_key_v1",
+        "policy": [
+            {"component": component, "direction": direction}
+            for component, direction in RANKING_POLICY
+        ],
+        "ordered_candidate_ids": ordered_candidate_ids,
+        "winner_explanation": _winner_explanation(candidates, ordered_candidate_ids),
+    }
 
 
 def beta_parameters(
@@ -69,20 +223,21 @@ def select_candidate(
     return best_id
 
 
+def rank_candidates(candidates: dict[str, Candidate]) -> list[str]:
+    """Return candidate IDs in stable best-to-worst lexicographic order."""
+    return sorted(
+        candidates,
+        key=lambda candidate_id: CandidateRankKey.from_candidate(candidates[candidate_id]),
+        reverse=True,
+    )
+
+
 def find_best_candidate(
     candidates: dict[str, Candidate],
 ) -> str | None:
     """Find the best candidate using lexicographic ranking."""
-    if not candidates:
-        return None
-    best_id: str | None = None
-    best_key: CandidateRankKey | None = None
-    for cid, cand in candidates.items():
-        key = CandidateRankKey.from_candidate(cand)
-        if best_key is None or key > best_key:
-            best_key = key
-            best_id = cid
-    return best_id
+    ordered_candidate_ids = rank_candidates(candidates)
+    return ordered_candidate_ids[0] if ordered_candidate_ids else None
 
 
 def should_stop(
@@ -163,7 +318,7 @@ def synthesize(
     )
 
     root = Candidate(
-        id="000",
+        id=ROOT_ID,
         parent_id=None,
         source=ROOT_SOURCE,
         heuristic=0.0,
@@ -174,17 +329,20 @@ def synthesize(
         iteration=0,
         expansion_count=0,
     )
-    candidates: dict[str, Candidate] = {"000": root}
-    store.write_candidate("000", ROOT_SOURCE)
+    candidates: dict[str, Candidate] = {ROOT_ID: root}
+    store.write_candidate(ROOT_ID, ROOT_SOURCE)
 
-    best_id: str | None = None
     stop_reason: str | None = None
     model_call_count = 0
     logical_refinement_count = 0
 
     def _evaluated_candidates() -> dict[str, Candidate]:
-        """Candidates for selection/ranking: excludes root, requires non-empty source."""
-        return {cid: c for cid, c in candidates.items() if cid != "000" and c.source.strip()}
+        """Return candidates eligible for selection and final ranking."""
+        return {
+            candidate_id: candidate
+            for candidate_id, candidate in candidates.items()
+            if _ranking_exclusion_reason(candidate_id, candidate) is None
+        }
 
     for iteration in range(1, max_refinements + 1):
         stop_reason = should_stop(candidates, iteration - 1, max_refinements)
@@ -319,9 +477,6 @@ def synthesize(
                 failure_summary=child.failure_summary,
             )
             store.write_rollout(child_id, rollout_result)
-            current_best = find_best_candidate(_evaluated_candidates())
-            if current_best:
-                best_id = current_best
             continue
 
         store.write_candidate(child_id, refine_result.source)
@@ -370,16 +525,16 @@ def synthesize(
             )
         )
 
-        current_best = find_best_candidate(_evaluated_candidates())
-        if current_best:
-            best_id = current_best
+    if not stop_reason:
+        stop_reason = should_stop(candidates, max_refinements, max_refinements) or "completed"
+
+    evaluated_candidates = _evaluated_candidates()
+    ordered_candidate_ids = rank_candidates(evaluated_candidates)
+    best_id = ordered_candidate_ids[0] if ordered_candidate_ids else None
 
     logger.info("Stop reason: %s", stop_reason)
     if best_id:
         logger.info("Best candidate: %s (H=%.3f)", best_id, candidates[best_id].heuristic)
-
-    if not stop_reason:
-        stop_reason = should_stop(candidates, max_refinements, max_refinements) or "completed"
 
     tree_data: dict[str, Any] = {
         "candidates": {
@@ -395,9 +550,11 @@ def synthesize(
                 "failure_summary": c.failure_summary,
                 "iteration": c.iteration,
                 "expansion_count": c.expansion_count,
+                "ranking": _candidate_ranking_artifact(cid, c),
             }
             for cid, c in candidates.items()
         },
+        "ranking": _ranking_artifact(evaluated_candidates, ordered_candidate_ids),
         "best_candidate_id": best_id,
     }
     store.write_tree(tree_data)

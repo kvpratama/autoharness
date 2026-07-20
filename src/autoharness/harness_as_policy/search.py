@@ -10,6 +10,13 @@ from pathlib import Path
 from typing import Any, Literal, TypedDict
 
 from autoharness.harness_as_policy.artifacts import ArtifactStore
+from autoharness.harness_as_policy.assessment import (
+    CandidateAssessor,
+    build_assessment_feedback,
+    failed_assessment,
+    generate_episode_seeds,
+    should_refine_legal_action,
+)
 from autoharness.harness_as_policy.environment import EnvironmentAdapter
 from autoharness.harness_as_policy.executor import PolicyExecutor
 from autoharness.harness_as_policy.models import (
@@ -17,7 +24,6 @@ from autoharness.harness_as_policy.models import (
     CandidateRankKey,
     Event,
     Profile,
-    RolloutResult,
     TerminationReason,
 )
 from autoharness.harness_as_policy.refiner import RefinerProtocol
@@ -247,7 +253,7 @@ def should_stop(
 ) -> str | None:
     """Check termination conditions. Returns stop reason or None."""
     for cand in candidates.values():
-        if cand.heuristic >= 1.0:
+        if cand.heuristic == 1.0:
             return f"success: candidate {cand.id} achieved H=1.0"
     if iteration >= max_refinements:
         return f"budget exhausted after {max_refinements} refinements"
@@ -272,6 +278,8 @@ def synthesize(
     execution_timeout: int = 10,
     max_source_size: int = 32768,
     model_id: str = "",
+    environment_seed: int = 0,
+    training_rollouts: int = 1,
 ) -> dict[str, Any]:
     """Run the full synthesis workflow. Returns summary dict."""
     now = datetime.now()
@@ -287,6 +295,8 @@ def synthesize(
         adapter=adapter,
         executor=policy_executor,
     )
+    episode_seeds = generate_episode_seeds(environment_seed, training_rollouts)
+    assessor = CandidateAssessor(evaluator)
 
     try:
         adapter.create()
@@ -305,6 +315,9 @@ def synthesize(
             "execution_timeout": execution_timeout,
             "max_source_size": max_source_size,
             "model_id": model_id,
+            "environment_seed": environment_seed,
+            "training_rollouts": training_rollouts,
+            "training_episode_seeds": episode_seeds,
         }
     )
 
@@ -389,30 +402,51 @@ def synthesize(
         )
 
         child_id = f"{iteration:03d}"
-        feedback: list[str] = []
+        feedback = (
+            build_assessment_feedback(parent.assessment) if parent.assessment is not None else []
+        )
         if parent.failure_summary:
-            feedback.append(parent.failure_summary)
-        if parent.termination_reason == TerminationReason.ILLEGAL_ACTION:
-            feedback.append("Policy produced an illegal action")
-        elif parent.termination_reason == TerminationReason.POLICY_REJECTED_ACTION:
-            feedback.append(
-                "is_legal_action rejected the proposed action; refine propose_action only"
+            feedback.insert(0, parent.failure_summary)
+        if parent.termination_reason == TerminationReason.POLICY_REJECTED_ACTION:
+            feedback.insert(
+                1,
+                "is_legal_action rejected the proposed action; refine propose_action only",
             )
         elif parent.termination_reason == TerminationReason.LEGALITY_DISAGREEMENT:
-            feedback.append(
-                "is_legal_action accepted an action that the environment rejected; refine both "
-                "functions"
+            feedback.insert(
+                1,
+                "is_legal_action accepted an action that the environment rejected; "
+                "refine both functions",
             )
-        elif parent.termination_reason == TerminationReason.STEP_LIMIT:
-            feedback.append("Policy reached step limit without solving")
-        elif parent.termination_reason in (
-            TerminationReason.EXECUTION_FAILURE,
-            TerminationReason.CONTRACT_FAILURE,
+        if (
+            parent.termination_reason == TerminationReason.ILLEGAL_ACTION
+            and not parent.failure_summary
         ):
-            feedback.append("Policy execution failed at runtime")
+            feedback.insert(0, "Policy produced an illegal action")
+        elif (
+            parent.termination_reason == TerminationReason.POLICY_REJECTED_ACTION
+            and not parent.failure_summary
+        ):
+            feedback.insert(
+                0, "is_legal_action rejected the proposed action; refine propose_action only"
+            )
+        elif (
+            parent.termination_reason == TerminationReason.LEGALITY_DISAGREEMENT
+            and not parent.failure_summary
+        ):
+            feedback.insert(
+                0,
+                "is_legal_action accepted an action that the environment rejected; "
+                "refine both functions",
+            )
+        elif (
+            parent.termination_reason == TerminationReason.STEP_LIMIT and not parent.failure_summary
+        ):
+            feedback.insert(0, "Policy reached step limit without solving")
 
         if parent.last_observation:
             feedback.append(f"Last observation before termination: {parent.last_observation}")
+        feedback = feedback[:5]
 
         logger.info(
             "Refining parent %s (iteration=%d)",
@@ -420,6 +454,8 @@ def synthesize(
             iteration,
         )
         refine_legal_action = parent.termination_reason != TerminationReason.POLICY_REJECTED_ACTION
+        if parent.assessment is not None and should_refine_legal_action(parent.assessment):
+            refine_legal_action = True
         refine_result = refiner.refine(
             env_name=adapter.env_id,
             rules=adapter.rules,
@@ -453,6 +489,7 @@ def synthesize(
             child_id,
         )
         if not refine_result.success or not refine_result.source:
+            assessment = failed_assessment(refine_result.error_details or "Refinement failed")
             child = Candidate(
                 id=child_id,
                 parent_id=parent_id,
@@ -461,50 +498,48 @@ def synthesize(
                 terminal_reward=0.0,
                 legal_action_count=0,
                 termination_reason=TerminationReason.CONTRACT_FAILURE,
-                failure_summary=(refine_result.error_details or "Refinement failed"),
+                failure_summary=assessment.failure_summary,
                 last_observation=None,
                 iteration=iteration,
                 expansion_count=0,
+                failure_count=assessment.failure_count,
+                episode_count=0,
+                assessment=assessment,
             )
             candidates[child_id] = child
             store.write_candidate(child_id, child.source)
-            rollout_result = RolloutResult(
-                steps=[],
-                heuristic=0.0,
-                terminal_reward=0.0,
-                legal_action_count=0,
-                termination_reason=TerminationReason.CONTRACT_FAILURE,
-                failure_summary=child.failure_summary,
-            )
-            store.write_rollout(child_id, rollout_result)
+            store.write_assessment(child_id, assessment)
             continue
 
         store.write_candidate(child_id, refine_result.source)
-        rollout_result = evaluator.evaluate(source=refine_result.source)
+        assessment = assessor.assess(refine_result.source, episode_seeds)
 
         logger.info(
             "Evaluation: candidate %s H=%.3f reward=%.3f (%s)",
             child_id,
-            rollout_result.heuristic,
-            rollout_result.terminal_reward,
-            rollout_result.termination_reason.value if rollout_result.termination_reason else "?",
+            assessment.heuristic,
+            assessment.terminal_reward,
+            assessment.termination_reason.value if assessment.termination_reason else "?",
         )
 
         child = Candidate(
             id=child_id,
             parent_id=parent_id,
             source=refine_result.source,
-            heuristic=rollout_result.heuristic,
-            terminal_reward=rollout_result.terminal_reward,
-            legal_action_count=rollout_result.legal_action_count,
-            termination_reason=rollout_result.termination_reason,
-            failure_summary=rollout_result.failure_summary,
-            last_observation=rollout_result.last_observation,
+            heuristic=assessment.heuristic,
+            terminal_reward=assessment.terminal_reward,
+            legal_action_count=assessment.legal_action_count,
+            termination_reason=assessment.termination_reason,
+            failure_summary=assessment.failure_summary,
+            last_observation=assessment.last_observation,
             iteration=iteration,
             expansion_count=0,
+            failure_count=assessment.failure_count,
+            episode_count=len(assessment.episodes),
+            assessment=assessment,
         )
         candidates[child_id] = child
-        store.write_rollout(child_id, rollout_result)
+        store.write_assessment(child_id, assessment)
 
         store.write_event(
             Event(
@@ -513,12 +548,14 @@ def synthesize(
                 candidate_id=child_id,
                 parent_id=parent_id,
                 metadata={
-                    "heuristic": rollout_result.heuristic,
-                    "terminal_reward": rollout_result.terminal_reward,
-                    "legal_action_count": rollout_result.legal_action_count,
+                    "heuristic": assessment.heuristic,
+                    "terminal_reward": assessment.terminal_reward,
+                    "legal_action_count": assessment.legal_action_count,
+                    "failure_count": assessment.failure_count,
+                    "episode_count": len(assessment.episodes),
                     "termination_reason": (
-                        rollout_result.termination_reason.value
-                        if rollout_result.termination_reason
+                        assessment.termination_reason.value
+                        if assessment.termination_reason
                         else None
                     ),
                 },
@@ -550,6 +587,8 @@ def synthesize(
                 "failure_summary": c.failure_summary,
                 "iteration": c.iteration,
                 "expansion_count": c.expansion_count,
+                "failure_count": c.failure_count,
+                "episode_count": c.episode_count,
                 "ranking": _candidate_ranking_artifact(cid, c),
             }
             for cid, c in candidates.items()

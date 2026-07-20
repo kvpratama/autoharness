@@ -6,7 +6,12 @@ import json
 from pathlib import Path
 from typing import Any
 
-from autoharness.harness_as_policy.models import Event, RolloutResult
+from autoharness.harness_as_policy.models import (
+    CandidateAssessment,
+    EpisodeResult,
+    Event,
+    RolloutResult,
+)
 
 
 class ArtifactStore:
@@ -112,6 +117,51 @@ class ArtifactStore:
             ],
         }
         self._write_json(self._run_dir / "rollouts" / f"{candidate_id}.json", data)
+
+    def write_assessment(self, candidate_id: str, assessment: CandidateAssessment) -> None:
+        """Persist a version-two aggregate assessment and all episode details."""
+        data = {
+            "schema_version": 2,
+            "aggregate": {
+                "heuristic": assessment.heuristic,
+                "terminal_reward": assessment.terminal_reward,
+                "legal_action_count": assessment.legal_action_count,
+                "failure_count": assessment.failure_count,
+                "termination_counts": {
+                    reason.value: count
+                    for reason, count in sorted(
+                        assessment.termination_counts.items(), key=lambda item: item[0].value
+                    )
+                },
+            },
+            "representative_episode_index": assessment.representative_episode_index,
+            "episodes": [self._serialize_episode(episode) for episode in assessment.episodes],
+        }
+        self._write_json(self._run_dir / "rollouts" / f"{candidate_id}.json", data)
+
+    @staticmethod
+    def _serialize_episode(episode: EpisodeResult) -> dict[str, Any]:
+        result = episode.rollout
+        return {
+            "seed": episode.seed,
+            "heuristic": result.heuristic,
+            "terminal_reward": result.terminal_reward,
+            "legal_action_count": result.legal_action_count,
+            "termination_reason": result.termination_reason.value,
+            "failure_summary": result.failure_summary,
+            "last_observation": result.last_observation,
+            "steps": [
+                {
+                    "observation": step.observation,
+                    "action": step.action,
+                    "is_legal": step.is_legal,
+                    "reward": step.reward,
+                    "terminated": step.terminated,
+                    "feedback": step.feedback,
+                }
+                for step in result.steps
+            ],
+        }
 
     def write_best_policy(self, source: str) -> None:
         path = self._run_dir / "best.py"

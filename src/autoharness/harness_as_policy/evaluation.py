@@ -8,8 +8,8 @@ from dataclasses import dataclass
 from autoharness.harness_as_policy.environment import EnvironmentAdapter
 from autoharness.harness_as_policy.executor import PolicyExecutor
 from autoharness.harness_as_policy.models import TerminationReason
+from autoharness.harness_as_policy.registry import EnvironmentSpec, get_environment_spec
 from autoharness.harness_as_policy.rollout import ExecutorProtocol, RolloutEvaluator
-from autoharness.harness_as_policy.tower_of_hanoi import DIFFICULTY_MAP, TowerOfHanoiAdapter
 
 
 @dataclass
@@ -62,31 +62,30 @@ def evaluate_policy_on_env(
 
 def evaluate_policy(
     source: str,
-    difficulties: list[str] | None = None,
+    spec: EnvironmentSpec | None = None,
+    executor: ExecutorProtocol | None = None,
 ) -> list[EvaluationResult]:
-    """Evaluate a generated policy across all difficulty variants.
+    """Evaluate a generated policy across the selected registry suite.
 
     Zero model calls — uses PolicyExecutor directly.
     """
-    if difficulties is None:
-        difficulties = list(DIFFICULTY_MAP)
-    results: list[EvaluationResult] = []
-    executor = PolicyExecutor()
-    for diff_key in difficulties:
-        _env_id, _max_steps, optimal = DIFFICULTY_MAP[diff_key]
-        adapter = TowerOfHanoiAdapter(difficulty=diff_key)
-        result = evaluate_policy_on_env(
-            adapter=adapter,
-            executor=executor,
+    if spec is None:
+        spec = get_environment_spec("TowerOfHanoi-v0")
+    policy_executor = executor or PolicyExecutor()
+    return [
+        evaluate_policy_on_env(
+            adapter=case.create_adapter(),
+            executor=policy_executor,
             source=source,
-            optimal_steps=optimal,
+            optimal_steps=case.optimal_steps,
         )
-        results.append(result)
-    return results
+        for case in spec.evaluation_cases
+    ]
 
 
 def format_evaluation_summary(
     results: list[EvaluationResult],
+    family: str = "tower-of-hanoi",
 ) -> str:
     """Format evaluation results as a human-readable string."""
     lines: list[str] = []
@@ -116,6 +115,7 @@ def format_evaluation_summary(
             max_disk_solved = max(max_disk_solved, 4)
         elif r.solved:
             max_disk_solved = max(max_disk_solved, 3)
-    lines.append(f"  Largest disk count solved: {max_disk_solved}")
+    if family == "tower-of-hanoi":
+        lines.append(f"  Largest disk count solved: {max_disk_solved}")
     lines.append("=" * 60)
     return "\n".join(lines)

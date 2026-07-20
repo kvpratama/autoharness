@@ -583,11 +583,13 @@ class FakeAdapter:
         self.max_steps = 10
         self.reject_actions = reject_actions
         self.step_calls: list[str] = []
+        self.reset_seeds: list[int | None] = []
 
     def create(self) -> None:
         pass
 
     def reset(self, seed: int | None = None) -> str:
+        self.reset_seeds.append(seed)
         return "initial observation"
 
     def step(self, action: str) -> StepResult:
@@ -656,6 +658,26 @@ ACCEPTED_BY_CHECKER_SOURCE = """def propose_action(observation: str) -> str:
 def is_legal_action(observation: str, action: str) -> bool:
     return True
 """
+
+
+def test_synthesize_reuses_shared_environment_seeds_for_every_candidate(tmp_path: Path) -> None:
+    """All assessed candidates receive the same ordered training seed list."""
+    adapter = FakeAdapter()
+    result = synthesize(
+        adapter=adapter,
+        profile=Profile.SMOKE,
+        refiner=FakeRefiner([ACCEPTED_BY_CHECKER_SOURCE, ACCEPTED_BY_CHECKER_SOURCE]),
+        artifact_root=tmp_path,
+        refinements=2,
+        environment_seed=17,
+        training_rollouts=3,
+    )
+    config = json.loads((tmp_path / result["run_id"] / "config.json").read_text())
+    seeds = config["training_episode_seeds"]
+    assert len(seeds) == 3
+    assert adapter.reset_seeds == [None, *seeds, *seeds]
+    assert config["environment_seed"] == 17
+    assert config["training_rollouts"] == 3
 
 
 def test_synthesize_refines_only_action_after_checker_rejection() -> None:

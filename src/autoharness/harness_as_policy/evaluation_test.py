@@ -6,11 +6,13 @@ from dataclasses import dataclass
 
 from autoharness.harness_as_policy.evaluation import (
     EvaluationResult,
+    evaluate_policy,
     evaluate_policy_on_env,
     format_evaluation_summary,
 )
 from autoharness.harness_as_policy.executor import ExecutionResult
 from autoharness.harness_as_policy.models import StepResult, TerminationReason
+from autoharness.harness_as_policy.registry import EnvironmentSpec, EvaluationCase
 
 
 @dataclass
@@ -176,6 +178,40 @@ def test_evaluate_policy_no_model_calls() -> None:
         source="policy source",
     )
     assert isinstance(result, EvaluationResult)
+
+
+def test_evaluate_policy_uses_registry_cases() -> None:
+    """Generated evaluation iterates exactly the cases declared by its spec."""
+    adapters = [FakeAdapter(env_id="Case-1"), FakeAdapter(env_id="Case-2")]
+    for adapter in adapters:
+        adapter._step_results = [StepResult("done", "[A C]", True, 1.0, True, "")]
+    spec = EnvironmentSpec(
+        env_id="Training-v0",
+        family="fake",
+        create_adapter=lambda: adapters[0],
+        default_training_rollouts=1,
+        evaluation_cases=tuple(
+            EvaluationCase(create_adapter=lambda adapter=adapter: adapter) for adapter in adapters
+        ),
+    )
+    results = evaluate_policy("source", spec=spec, executor=FakeExecutor())
+    assert [result.env_id for result in results] == ["Case-1", "Case-2"]
+
+
+def test_blackjack_summary_omits_hanoi_disk_metric() -> None:
+    result = EvaluationResult(
+        env_id="Blackjack-v0",
+        solved=True,
+        reward=1.0,
+        legal_action_count=5,
+        steps_used=5,
+        optimal_steps=50,
+        termination_reason=TerminationReason.ENVIRONMENT_TERMINATION,
+        failure_summary=None,
+        latency=0.01,
+        execution_failure=False,
+    )
+    assert "Largest disk count solved" not in format_evaluation_summary([result], "blackjack")
 
 
 def test_evaluate_policy_on_env_preserves_step_progress_reward() -> None:

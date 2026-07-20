@@ -6,12 +6,7 @@ import json
 from pathlib import Path
 from typing import Any
 
-from autoharness.harness_as_policy.models import (
-    CandidateAssessment,
-    EpisodeResult,
-    Event,
-    RolloutResult,
-)
+from autoharness.harness_as_policy.models import CandidateAssessment, EpisodeResult, Event
 
 
 class ArtifactStore:
@@ -94,29 +89,6 @@ class ArtifactStore:
         tmp = path.with_suffix(".tmp")
         tmp.write_text(source)
         tmp.rename(path)
-
-    def write_rollout(self, candidate_id: str, result: RolloutResult) -> None:
-        data = {
-            "heuristic": result.heuristic,
-            "terminal_reward": result.terminal_reward,
-            "legal_action_count": result.legal_action_count,
-            "termination_reason": (
-                result.termination_reason.value if result.termination_reason else None
-            ),
-            "failure_summary": result.failure_summary,
-            "steps": [
-                {
-                    "observation": s.observation,
-                    "action": s.action,
-                    "is_legal": s.is_legal,
-                    "reward": s.reward,
-                    "terminated": s.terminated,
-                    "feedback": s.feedback,
-                }
-                for s in result.steps
-            ],
-        }
-        self._write_json(self._run_dir / "rollouts" / f"{candidate_id}.json", data)
 
     def write_assessment(self, candidate_id: str, assessment: CandidateAssessment) -> None:
         """Persist a version-two aggregate assessment and all episode details."""

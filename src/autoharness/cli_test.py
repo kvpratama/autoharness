@@ -15,6 +15,7 @@ from autoharness.cli import evaluate_baseline_cmd, evaluate_cmd, main, synthesiz
 from autoharness.harness_as_policy.evaluation import EvaluationResult
 from autoharness.harness_as_policy.live_policy import LiveActionResult
 from autoharness.harness_as_policy.models import StepResult, TerminationReason
+from autoharness.harness_as_policy.registry import EnvironmentSpec, EvaluationCase
 
 
 @dataclass
@@ -34,7 +35,7 @@ class FakeBaselineAdapter:
         if self.setup_error is not None:
             raise self.setup_error
 
-    def reset(self) -> str:
+    def reset(self, seed: int | None = None) -> str:
         """Return the initial fake observation."""
         return self._observation
 
@@ -204,6 +205,7 @@ def test_evaluate_cmd_requires_run() -> None:
             "def propose_action(board: str) -> str: return '[A C]'\n"
             "def is_legal_action(board: str, action: str) -> bool: return True"
         )
+        (Path(tmpdir) / "config.json").write_text('{"env_id": "TowerOfHanoi-v0"}')
         with patch("autoharness.cli.evaluate_policy") as mock_eval:
             mock_eval.return_value = []
             with patch("autoharness.cli.format_evaluation_summary") as mock_fmt:
@@ -233,6 +235,7 @@ def test_evaluate_cmd_persists_structured_termination_data() -> None:
             "def propose_action(board: str) -> str: return '[A C]'\n"
             "def is_legal_action(board: str, action: str) -> bool: return True"
         )
+        (run_dir / "config.json").write_text('{"env_id": "TowerOfHanoi-v0"}')
         with patch("autoharness.cli.evaluate_policy", return_value=[result]):
             evaluate_cmd(run_dir=run_dir)
 
@@ -307,8 +310,17 @@ def test_evaluate_baseline_cmd_maps_each_exit_to_structured_termination_data(
         live_policy.act.return_value = action_result
     with tempfile.TemporaryDirectory() as tmpdir:
         run_dir = Path(tmpdir) / "run"
+        run_dir.mkdir()
+        (run_dir / "config.json").write_text('{"env_id": "Fake-v0"}')
+        spec = EnvironmentSpec(
+            env_id="Fake-v0",
+            family="fake",
+            create_adapter=lambda: adapter,
+            default_training_rollouts=1,
+            evaluation_cases=(EvaluationCase(create_adapter=lambda: adapter),),
+        )
         with (
-            patch("autoharness.cli.TowerOfHanoiAdapter", return_value=adapter),
+            patch("autoharness.cli.get_environment_spec", return_value=spec),
             patch("autoharness.cli.LivePolicy", return_value=live_policy),
             patch(
                 "autoharness.harness_as_policy.tower_of_hanoi.DIFFICULTY_MAP",

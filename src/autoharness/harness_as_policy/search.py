@@ -405,44 +405,30 @@ def synthesize(
         feedback = (
             build_assessment_feedback(parent.assessment) if parent.assessment is not None else []
         )
+        descriptor = None
+        if parent.termination_reason == TerminationReason.ILLEGAL_ACTION:
+            descriptor = "Policy produced an illegal action"
+        elif parent.termination_reason == TerminationReason.POLICY_REJECTED_ACTION:
+            descriptor = "is_legal_action rejected the proposed action; refine propose_action only"
+        elif parent.termination_reason == TerminationReason.LEGALITY_DISAGREEMENT:
+            descriptor = (
+                "is_legal_action accepted an action that the environment rejected; "
+                "refine both functions"
+            )
+        elif parent.termination_reason == TerminationReason.STEP_LIMIT:
+            descriptor = "Policy reached step limit without solving"
+        elif parent.termination_reason in (
+            TerminationReason.EXECUTION_FAILURE,
+            TerminationReason.CONTRACT_FAILURE,
+        ):
+            descriptor = "Policy execution failed at runtime"
+
         if parent.failure_summary:
             feedback.insert(0, parent.failure_summary)
-        if parent.termination_reason == TerminationReason.POLICY_REJECTED_ACTION:
-            feedback.insert(
-                1,
-                "is_legal_action rejected the proposed action; refine propose_action only",
-            )
-        elif parent.termination_reason == TerminationReason.LEGALITY_DISAGREEMENT:
-            feedback.insert(
-                1,
-                "is_legal_action accepted an action that the environment rejected; "
-                "refine both functions",
-            )
-        if (
-            parent.termination_reason == TerminationReason.ILLEGAL_ACTION
-            and not parent.failure_summary
-        ):
-            feedback.insert(0, "Policy produced an illegal action")
-        elif (
-            parent.termination_reason == TerminationReason.POLICY_REJECTED_ACTION
-            and not parent.failure_summary
-        ):
-            feedback.insert(
-                0, "is_legal_action rejected the proposed action; refine propose_action only"
-            )
-        elif (
-            parent.termination_reason == TerminationReason.LEGALITY_DISAGREEMENT
-            and not parent.failure_summary
-        ):
-            feedback.insert(
-                0,
-                "is_legal_action accepted an action that the environment rejected; "
-                "refine both functions",
-            )
-        elif (
-            parent.termination_reason == TerminationReason.STEP_LIMIT and not parent.failure_summary
-        ):
-            feedback.insert(0, "Policy reached step limit without solving")
+            if descriptor:
+                feedback.insert(1, descriptor)
+        elif descriptor:
+            feedback.insert(0, descriptor)
 
         if parent.last_observation:
             feedback.append(f"Last observation before termination: {parent.last_observation}")

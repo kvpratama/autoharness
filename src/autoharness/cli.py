@@ -23,9 +23,6 @@ from autoharness.harness_as_policy.models import Profile, TerminationReason
 from autoharness.harness_as_policy.refiner import Refiner
 from autoharness.harness_as_policy.registry import get_environment_spec
 from autoharness.harness_as_policy.search import synthesize
-from autoharness.harness_as_policy.tower_of_hanoi import TowerOfHanoiAdapter as _TowerOfHanoiAdapter
-
-TowerOfHanoiAdapter = _TowerOfHanoiAdapter
 
 
 class SettingsKwargs(TypedDict, total=False):

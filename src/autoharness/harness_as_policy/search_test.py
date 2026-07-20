@@ -319,6 +319,26 @@ def test_should_stop_success() -> None:
     assert "success" in reason
 
 
+def test_should_stop_strict_equality() -> None:
+    """Should not stop early when candidate heuristic is close to but not exactly 1.0."""
+    candidates = {
+        "000": Candidate(
+            id="000",
+            parent_id=None,
+            source="",
+            heuristic=0.999,
+            terminal_reward=0.999,
+            legal_action_count=7,
+            termination_reason=TerminationReason.ENVIRONMENT_TERMINATION,
+            failure_summary=None,
+            iteration=0,
+            expansion_count=0,
+        ),
+    }
+    reason = should_stop(candidates, iteration=1, max_refinements=8)
+    assert reason is None
+
+
 def test_should_stop_budget_exhausted() -> None:
     """Should stop when iteration reaches max_refinements."""
     reason = should_stop({}, iteration=8, max_refinements=8)

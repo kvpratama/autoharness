@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from autoharness.harness_as_policy.environment import EnvironmentAdapter
 from autoharness.harness_as_policy.executor import PolicyExecutor
 from autoharness.harness_as_policy.models import TerminationReason
-from autoharness.harness_as_policy.registry import EnvironmentSpec, get_environment_spec
+from autoharness.harness_as_policy.registry import EnvironmentSpec
 from autoharness.harness_as_policy.rollout import ExecutorProtocol, RolloutEvaluator
 
 
@@ -62,15 +62,13 @@ def evaluate_policy_on_env(
 
 def evaluate_policy(
     source: str,
-    spec: EnvironmentSpec | None = None,
+    spec: EnvironmentSpec,
     executor: ExecutorProtocol | None = None,
 ) -> list[EvaluationResult]:
     """Evaluate a generated policy across the selected registry suite.
 
     Zero model calls — uses PolicyExecutor directly.
     """
-    if spec is None:
-        spec = get_environment_spec("TowerOfHanoi-v0")
     policy_executor = executor or PolicyExecutor()
     return [
         evaluate_policy_on_env(

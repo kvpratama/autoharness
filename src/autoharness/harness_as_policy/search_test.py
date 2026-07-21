@@ -732,9 +732,6 @@ def test_synthesize_refines_only_action_after_checker_rejection() -> None:
 
     assert refiner.scopes == [True, False]
     assert refiner.feedback[1][0] == (
-        "Policy legality checker rejected action '[X Y]' (checker=False)"
-    )
-    assert refiner.feedback[1][1] == (
         "is_legal_action rejected the proposed action; refine propose_action only"
     )
     assert adapter.step_calls == ["[X Y]"] * adapter.max_steps
@@ -755,9 +752,5 @@ def test_synthesize_refines_both_after_legality_disagreement() -> None:
 
     assert refiner.scopes == [True, True]
     assert refiner.feedback[1][0] == (
-        "Legality disagreement: checker=True, environment=False; environment feedback: Illegal "
-        "action"
-    )
-    assert refiner.feedback[1][1] == (
         "is_legal_action accepted an action that the environment rejected; refine both functions"
     )

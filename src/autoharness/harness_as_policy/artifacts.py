@@ -105,6 +105,11 @@ class ArtifactStore:
                         assessment.termination_counts.items(), key=lambda item: item[0].value
                     )
                 },
+                "termination_reason": assessment.termination_reason.value
+                if assessment.termination_reason is not None
+                else None,
+                "failure_summary": assessment.failure_summary,
+                "last_observation": assessment.last_observation,
             },
             "representative_episode_index": assessment.representative_episode_index,
             "episodes": [self._serialize_episode(episode) for episode in assessment.episodes],

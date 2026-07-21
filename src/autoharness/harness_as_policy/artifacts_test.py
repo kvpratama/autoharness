@@ -90,6 +90,9 @@ def test_write_assessment_preserves_aggregate_and_episodes(store: ArtifactStore)
     data = json.loads(path.read_text())
     assert data["schema_version"] == 2
     assert data["aggregate"]["heuristic"] == 0.75
+    assert data["aggregate"]["termination_reason"] == "step_limit"
+    assert data["aggregate"]["failure_summary"] is None
+    assert data["aggregate"]["last_observation"] == "last"
     assert data["representative_episode_index"] == 1
     assert [episode["seed"] for episode in data["episodes"]] == [11, 22]
     assert "heuristic" not in data
@@ -114,6 +117,9 @@ def test_write_failed_assessment_has_no_episodes(store: ArtifactStore) -> None:
     assert data["episodes"] == []
     assert data["representative_episode_index"] is None
     assert data["aggregate"]["termination_counts"] == {"contract_failure": 1}
+    assert data["aggregate"]["termination_reason"] == "contract_failure"
+    assert data["aggregate"]["failure_summary"] == "failed"
+    assert data["aggregate"]["last_observation"] is None
 
 
 def test_write_event(store: ArtifactStore) -> None:

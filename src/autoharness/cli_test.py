@@ -197,6 +197,70 @@ def test_synthesize_cmd_full_search_override() -> None:
     assert mock_synthesize.call_args.kwargs["refinements"] == 10
 
 
+def test_synthesize_cmd_preserves_explicit_training_rollouts() -> None:
+    """synthesize command preserves an explicitly configured training_rollouts value."""
+    with (
+        tempfile.TemporaryDirectory() as tmpdir,
+        patch("autoharness.cli.Refiner"),
+        patch("autoharness.cli.synthesize") as mock_synthesize,
+    ):
+        mock_synthesize.return_value = {
+            "run_id": "test123",
+            "stop_reason": "budget exhausted",
+            "best_candidate_id": "001",
+            "total_candidates": 3,
+            "iterations_used": 2,
+            "profile": "smoke",
+            "model_call_count": 2,
+            "logical_refinement_count": 2,
+        }
+        with patch(
+            "sys.argv",
+            [
+                "autoharness",
+                "synthesize",
+                "--env",
+                "TowerOfHanoi-v0",
+                "--model",
+                "anthropic:claude-3-opus",
+                "--training-rollouts",
+                "7",
+                "--artifact-root",
+                tmpdir,
+            ],
+        ):
+            result = synthesize_cmd()
+    assert result is not None
+    assert mock_synthesize.call_args.kwargs["training_rollouts"] == 7
+
+
+@pytest.mark.parametrize("training_rollouts", [0, -1])
+def test_synthesize_cmd_reports_invalid_training_rollouts_as_cli_error(
+    capsys: pytest.CaptureFixture[str],
+    training_rollouts: int,
+) -> None:
+    """Invalid training rollouts exit through argparse instead of a traceback."""
+    with patch(
+        "sys.argv",
+        [
+            "autoharness",
+            "synthesize",
+            "--model",
+            "anthropic:claude-3-opus",
+            "--training-rollouts",
+            str(training_rollouts),
+        ],
+    ):
+        with pytest.raises(SystemExit) as exc_info:
+            synthesize_cmd()
+
+    assert exc_info.value.code == 2
+    error = capsys.readouterr().err
+    assert "autoharness: error:" in error
+    assert "training_rollouts" in error
+    assert "Traceback" not in error
+
+
 def test_evaluate_cmd_requires_run() -> None:
     """evaluate command requires --run flag."""
     with tempfile.TemporaryDirectory() as tmpdir:

@@ -192,7 +192,10 @@ def synthesize_cmd(
     if args.environment_seed is not None:
         settings_kwargs["environment_seed"] = args.environment_seed
 
-    settings = Settings(**settings_kwargs)
+    try:
+        settings = Settings(**settings_kwargs)
+    except ValidationError as exc:
+        parser.error(str(exc))
 
     try:
         spec = get_environment_spec(settings.env_id)
@@ -213,7 +216,11 @@ def synthesize_cmd(
         max_source_size=settings.max_source_size,
         model_id=settings.model,
         environment_seed=settings.environment_seed,
-        training_rollouts=settings.training_rollouts or spec.default_training_rollouts,
+        training_rollouts=(
+            spec.default_training_rollouts
+            if settings.training_rollouts is None
+            else settings.training_rollouts
+        ),
     )
     print(f"Run ID: {result.get('run_id', 'unknown')}")
     print(f"Stop reason: {result.get('stop_reason', 'unknown')}")

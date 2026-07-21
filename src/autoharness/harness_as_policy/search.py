@@ -423,15 +423,8 @@ def synthesize(
         ):
             descriptor = "Policy execution failed at runtime"
 
-        if parent.failure_summary:
-            feedback.insert(0, parent.failure_summary)
-            if descriptor:
-                feedback.insert(1, descriptor)
-        elif descriptor:
+        if descriptor:
             feedback.insert(0, descriptor)
-
-        if parent.last_observation:
-            feedback.append(f"Last observation before termination: {parent.last_observation}")
         feedback = feedback[:5]
 
         logger.info(

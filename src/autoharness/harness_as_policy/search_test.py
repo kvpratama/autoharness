@@ -383,13 +383,17 @@ def test_synthesize_empty_policies() -> None:
 
 def test_synthesize_persists_order_matching_find_best_candidate() -> None:
     """Persisted ranking exactly matches final candidate selection."""
+    failing_source = """def propose_action(observation: str) -> str:
+    raise RuntimeError("failing policy")
+"""
     with tempfile.TemporaryDirectory() as tmpdir:
         result = synthesize(
             adapter=FakeAdapter(),
             profile=Profile.SMOKE,
-            refiner=FakeRefiner(responses=[ACCEPTED_BY_CHECKER_SOURCE, ACCEPTED_BY_CHECKER_SOURCE]),
+            refiner=FakeRefiner(responses=[ACCEPTED_BY_CHECKER_SOURCE, failing_source]),
             artifact_root=Path(tmpdir),
             refinements=2,
+            training_rollouts=2,
         )
         tree_path = Path(tmpdir) / result["run_id"] / "tree.json"
         tree = json.loads(tree_path.read_text())
@@ -410,6 +414,8 @@ def test_synthesize_persists_order_matching_find_best_candidate() -> None:
             failure_summary=data["failure_summary"],
             iteration=data["iteration"],
             expansion_count=data["expansion_count"],
+            failure_count=data["failure_count"],
+            episode_count=data["episode_count"],
         )
         for candidate_id, data in tree["candidates"].items()
         if data["ranking"]["eligible"]
@@ -432,18 +438,29 @@ def test_synthesize_persists_order_matching_find_best_candidate() -> None:
     assert tree["candidates"]["001"]["ranking"]["components"] == {
         "heuristic": 0.5,
         "reward": 0.0,
-        "legal_actions": 10,
+        "legal_actions": 20,
         "failures": 0,
         "iteration": 1,
     }
+    assert tree["candidates"]["002"]["failure_count"] == 2
+    assert tree["candidates"]["002"]["episode_count"] == 2
+    assert tree["candidates"]["002"]["ranking"]["components"] == {
+        "heuristic": 0.0,
+        "reward": 0.0,
+        "legal_actions": 0,
+        "failures": 2,
+        "iteration": 2,
+    }
+    assert reconstructed_candidates["002"].failure_count == 2
+    assert reconstructed_candidates["002"].episode_count == 2
     assert tree["ranking"]["winner_explanation"] == {
         "winner_id": "001",
         "runner_up_id": "002",
         "outcome": "decisive_component",
-        "tied_components": ["heuristic", "reward", "legal_actions", "failures"],
-        "decisive_component": "iteration",
-        "winner_value": 1,
-        "runner_up_value": 2,
+        "tied_components": [],
+        "decisive_component": "heuristic",
+        "winner_value": 0.5,
+        "runner_up_value": 0.0,
     }
 
 

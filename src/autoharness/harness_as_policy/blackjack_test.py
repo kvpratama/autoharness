@@ -49,14 +49,14 @@ def test_standing_completes_five_hands_and_propagates_reward() -> None:
     adapter = BlackjackAdapter()
     adapter.create()
     assert "Hand 1/5" in adapter.reset(seed=42)
-    result = adapter.step("[Stand]")
     for _ in range(4):
-        assert result.is_legal
-        if result.terminated:
-            break
         result = adapter.step("[Stand]")
-    assert result.terminated
-    assert result.reward in {0.0, 0.2, 0.4, 0.6, 0.8, 1.0}
+        assert result.is_legal
+        assert not result.terminated
+    final_result = adapter.step("[Stand]")
+    assert final_result.is_legal
+    assert final_result.terminated
+    assert final_result.reward in {0.0, 0.2, 0.4, 0.6, 0.8, 1.0}
 
 
 def test_use_before_create_raises() -> None:

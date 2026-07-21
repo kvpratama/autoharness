@@ -387,6 +387,26 @@ def test_main_evaluate_missing_best_py_returns_nonzero() -> None:
     assert result != 0
 
 
+def test_main_evaluate_baseline_missing_config_returns_nonzero() -> None:
+    """main returns a nonzero status when evaluate-baseline is run and config.json is missing."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        run_dir = Path(tmpdir) / "run"
+        run_dir.mkdir()
+        with patch(
+            "sys.argv",
+            [
+                "autoharness",
+                "evaluate-baseline",
+                "--run",
+                str(run_dir),
+                "--model",
+                "fake:model",
+            ],
+        ):
+            result = main()
+    assert result != 0
+
+
 def test_main_synthesize_evaluation_failure_returns_nonzero() -> None:
     """main returns a nonzero status when synthesize is run but evaluation fails."""
     with (

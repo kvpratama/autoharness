@@ -498,7 +498,11 @@ def main(args: list[str] | None = None) -> int:
         if results is None:
             return 1
     elif parsed.command == "evaluate-baseline":
-        evaluate_baseline_cmd(parsed.run, parsed.model, parsed.input_price, parsed.output_price)
+        results = evaluate_baseline_cmd(
+            parsed.run, parsed.model, parsed.input_price, parsed.output_price
+        )
+        if results is None:
+            return 1
     return 0
 
 

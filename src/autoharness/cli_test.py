@@ -468,7 +468,7 @@ def test_main_evaluate_baseline_missing_config_returns_nonzero() -> None:
             ],
         ):
             result = main()
-    assert result != 0
+    assert result not in (0, None)
 
 
 def test_main_synthesize_evaluation_failure_returns_nonzero() -> None:

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 
-from pydantic import field_validator
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from autoharness.harness_as_policy.models import Profile
@@ -34,6 +34,8 @@ class Settings(BaseSettings):
     refinements: int | None = None
     artifact_root: str = "artifacts"
     thompson_seed: int = 42
+    environment_seed: int = 0
+    training_rollouts: int | None = Field(default=None, gt=0)
     execution_timeout: int = 10
     max_source_size: int = 32768
     log_level: str = "WARNING"

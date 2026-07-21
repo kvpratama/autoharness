@@ -15,6 +15,7 @@ from autoharness.cli import evaluate_baseline_cmd, evaluate_cmd, main, synthesiz
 from autoharness.harness_as_policy.evaluation import EvaluationResult
 from autoharness.harness_as_policy.live_policy import LiveActionResult
 from autoharness.harness_as_policy.models import StepResult, TerminationReason
+from autoharness.harness_as_policy.registry import EnvironmentSpec, EvaluationCase
 
 
 @dataclass
@@ -34,7 +35,7 @@ class FakeBaselineAdapter:
         if self.setup_error is not None:
             raise self.setup_error
 
-    def reset(self) -> str:
+    def reset(self, seed: int | None = None) -> str:
         """Return the initial fake observation."""
         return self._observation
 
@@ -196,6 +197,70 @@ def test_synthesize_cmd_full_search_override() -> None:
     assert mock_synthesize.call_args.kwargs["refinements"] == 10
 
 
+def test_synthesize_cmd_preserves_explicit_training_rollouts() -> None:
+    """synthesize command preserves an explicitly configured training_rollouts value."""
+    with (
+        tempfile.TemporaryDirectory() as tmpdir,
+        patch("autoharness.cli.Refiner"),
+        patch("autoharness.cli.synthesize") as mock_synthesize,
+    ):
+        mock_synthesize.return_value = {
+            "run_id": "test123",
+            "stop_reason": "budget exhausted",
+            "best_candidate_id": "001",
+            "total_candidates": 3,
+            "iterations_used": 2,
+            "profile": "smoke",
+            "model_call_count": 2,
+            "logical_refinement_count": 2,
+        }
+        with patch(
+            "sys.argv",
+            [
+                "autoharness",
+                "synthesize",
+                "--env",
+                "TowerOfHanoi-v0",
+                "--model",
+                "anthropic:claude-3-opus",
+                "--training-rollouts",
+                "7",
+                "--artifact-root",
+                tmpdir,
+            ],
+        ):
+            result = synthesize_cmd()
+    assert result is not None
+    assert mock_synthesize.call_args.kwargs["training_rollouts"] == 7
+
+
+@pytest.mark.parametrize("training_rollouts", [0, -1])
+def test_synthesize_cmd_reports_invalid_training_rollouts_as_cli_error(
+    capsys: pytest.CaptureFixture[str],
+    training_rollouts: int,
+) -> None:
+    """Invalid training rollouts exit through argparse instead of a traceback."""
+    with patch(
+        "sys.argv",
+        [
+            "autoharness",
+            "synthesize",
+            "--model",
+            "anthropic:claude-3-opus",
+            "--training-rollouts",
+            str(training_rollouts),
+        ],
+    ):
+        with pytest.raises(SystemExit) as exc_info:
+            synthesize_cmd()
+
+    assert exc_info.value.code == 2
+    error = capsys.readouterr().err
+    assert "autoharness: error:" in error
+    assert "training_rollouts" in error
+    assert "Traceback" not in error
+
+
 def test_evaluate_cmd_requires_run() -> None:
     """evaluate command requires --run flag."""
     with tempfile.TemporaryDirectory() as tmpdir:
@@ -204,6 +269,7 @@ def test_evaluate_cmd_requires_run() -> None:
             "def propose_action(board: str) -> str: return '[A C]'\n"
             "def is_legal_action(board: str, action: str) -> bool: return True"
         )
+        (Path(tmpdir) / "config.json").write_text('{"env_id": "TowerOfHanoi-v0"}')
         with patch("autoharness.cli.evaluate_policy") as mock_eval:
             mock_eval.return_value = []
             with patch("autoharness.cli.format_evaluation_summary") as mock_fmt:
@@ -233,6 +299,7 @@ def test_evaluate_cmd_persists_structured_termination_data() -> None:
             "def propose_action(board: str) -> str: return '[A C]'\n"
             "def is_legal_action(board: str, action: str) -> bool: return True"
         )
+        (run_dir / "config.json").write_text('{"env_id": "TowerOfHanoi-v0"}')
         with patch("autoharness.cli.evaluate_policy", return_value=[result]):
             evaluate_cmd(run_dir=run_dir)
 
@@ -307,8 +374,17 @@ def test_evaluate_baseline_cmd_maps_each_exit_to_structured_termination_data(
         live_policy.act.return_value = action_result
     with tempfile.TemporaryDirectory() as tmpdir:
         run_dir = Path(tmpdir) / "run"
+        run_dir.mkdir()
+        (run_dir / "config.json").write_text('{"env_id": "Fake-v0"}')
+        spec = EnvironmentSpec(
+            env_id="Fake-v0",
+            family="fake",
+            create_adapter=lambda: adapter,
+            default_training_rollouts=1,
+            evaluation_cases=(EvaluationCase(create_adapter=lambda: adapter),),
+        )
         with (
-            patch("autoharness.cli.TowerOfHanoiAdapter", return_value=adapter),
+            patch("autoharness.cli.get_environment_spec", return_value=spec),
             patch("autoharness.cli.LivePolicy", return_value=live_policy),
             patch(
                 "autoharness.harness_as_policy.tower_of_hanoi.DIFFICULTY_MAP",
@@ -373,6 +449,26 @@ def test_main_evaluate_missing_best_py_returns_nonzero() -> None:
         ):
             result = main()
     assert result != 0
+
+
+def test_main_evaluate_baseline_missing_config_returns_nonzero() -> None:
+    """main returns a nonzero status when evaluate-baseline is run and config.json is missing."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        run_dir = Path(tmpdir) / "run"
+        run_dir.mkdir()
+        with patch(
+            "sys.argv",
+            [
+                "autoharness",
+                "evaluate-baseline",
+                "--run",
+                str(run_dir),
+                "--model",
+                "fake:model",
+            ],
+        ):
+            result = main()
+    assert result not in (0, None)
 
 
 def test_main_synthesize_evaluation_failure_returns_nonzero() -> None:

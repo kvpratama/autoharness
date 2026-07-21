@@ -113,6 +113,23 @@ def test_candidate_rank_key_from_candidate_failure_counts() -> None:
     assert key.failures == 1
 
 
+def test_candidate_rank_key_uses_aggregate_failure_count() -> None:
+    """Aggregate failures outrank the representative termination fallback."""
+    cand = Candidate(
+        id="005",
+        parent_id=None,
+        source="source",
+        heuristic=0.5,
+        terminal_reward=0.0,
+        legal_action_count=1,
+        termination_reason=TerminationReason.ENVIRONMENT_TERMINATION,
+        failure_summary=None,
+        iteration=5,
+        failure_count=2,
+    )
+    assert CandidateRankKey.from_candidate(cand).failures == 2
+
+
 def test_event_creation() -> None:
     """Event stores expected fields."""
     ev = Event(

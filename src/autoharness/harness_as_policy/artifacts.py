@@ -6,7 +6,7 @@ import json
 from pathlib import Path
 from typing import Any
 
-from autoharness.harness_as_policy.models import Event, RolloutResult
+from autoharness.harness_as_policy.models import CandidateAssessment, EpisodeResult, Event
 
 
 class ArtifactStore:
@@ -90,28 +90,55 @@ class ArtifactStore:
         tmp.write_text(source)
         tmp.rename(path)
 
-    def write_rollout(self, candidate_id: str, result: RolloutResult) -> None:
+    def write_assessment(self, candidate_id: str, assessment: CandidateAssessment) -> None:
+        """Persist a version-two aggregate assessment and all episode details."""
         data = {
+            "schema_version": 2,
+            "aggregate": {
+                "heuristic": assessment.heuristic,
+                "terminal_reward": assessment.terminal_reward,
+                "legal_action_count": assessment.legal_action_count,
+                "failure_count": assessment.failure_count,
+                "termination_counts": {
+                    reason.value: count
+                    for reason, count in sorted(
+                        assessment.termination_counts.items(), key=lambda item: item[0].value
+                    )
+                },
+                "termination_reason": assessment.termination_reason.value
+                if assessment.termination_reason is not None
+                else None,
+                "failure_summary": assessment.failure_summary,
+                "last_observation": assessment.last_observation,
+            },
+            "representative_episode_index": assessment.representative_episode_index,
+            "episodes": [self._serialize_episode(episode) for episode in assessment.episodes],
+        }
+        self._write_json(self._run_dir / "rollouts" / f"{candidate_id}.json", data)
+
+    @staticmethod
+    def _serialize_episode(episode: EpisodeResult) -> dict[str, Any]:
+        result = episode.rollout
+        return {
+            "seed": episode.seed,
             "heuristic": result.heuristic,
             "terminal_reward": result.terminal_reward,
             "legal_action_count": result.legal_action_count,
-            "termination_reason": (
-                result.termination_reason.value if result.termination_reason else None
-            ),
+            "termination_reason": result.termination_reason.value,
             "failure_summary": result.failure_summary,
+            "last_observation": result.last_observation,
             "steps": [
                 {
-                    "observation": s.observation,
-                    "action": s.action,
-                    "is_legal": s.is_legal,
-                    "reward": s.reward,
-                    "terminated": s.terminated,
-                    "feedback": s.feedback,
+                    "observation": step.observation,
+                    "action": step.action,
+                    "is_legal": step.is_legal,
+                    "reward": step.reward,
+                    "terminated": step.terminated,
+                    "feedback": step.feedback,
                 }
-                for s in result.steps
+                for step in result.steps
             ],
         }
-        self._write_json(self._run_dir / "rollouts" / f"{candidate_id}.json", data)
 
     def write_best_policy(self, source: str) -> None:
         path = self._run_dir / "best.py"

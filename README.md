@@ -1,7 +1,7 @@
 # AutoHarness
 
 AutoHarness experiments with harness-as-policy synthesis for game-playing agents. The current
-implementation targets TextArena Tower of Hanoi environments: an LLM refines a Python policy,
+implementation targets TextArena Tower of Hanoi and Blackjack environments: an LLM refines a Python policy,
 AutoHarness executes that policy in a constrained subprocess, evaluates it against the environment,
 and keeps the best candidates as run artifacts.
 
@@ -57,6 +57,15 @@ uv run autoharness synthesize \
   --profile smoke
 ```
 
+For Blackjack:
+
+```bash
+uv run autoharness synthesize \
+  --env Blackjack-v0 \
+  --model <provider:model> \
+  --environment-seed 0
+```
+
 The command prints a run ID and writes artifacts under `artifacts/<run-id>/`.
 
 Useful options:
@@ -69,6 +78,12 @@ Useful options:
 - `--seed N`: set the Thompson sampling RNG seed
 - `--execution-timeout N`: set the per-action policy execution timeout in seconds
 - `--max-source-size N`: cap generated policy source size in bytes
+- `--environment-seed N`: base seed for shared candidate-assessment episodes
+- `--training-rollouts N`: episodes per candidate (defaults to one for Hanoi and five for Blackjack)
+
+Every candidate in a run uses the same resolved ordered training-seed list. `--seed` controls only
+Thompson sampling. Blackjack final evaluation is currently one provisional episode; it does not
+implement a repeated 20-match held-out protocol.
 
 ## Paper Reproduction (Harness-as-Policy)
 
@@ -132,6 +147,8 @@ AutoHarness configuration is defined in `src/autoharness/harness_as_policy/confi
 | `AUTOHARNESS_REFINEMENTS` | profile default | Optional refinement budget override |
 | `AUTOHARNESS_ARTIFACT_ROOT` | `artifacts` | Output directory for run artifacts |
 | `AUTOHARNESS_THOMPSON_SEED` | `42` | RNG seed for candidate selection |
+| `AUTOHARNESS_TRAINING_ROLLOUTS` | environment default | Episodes per candidate |
+| `AUTOHARNESS_ENVIRONMENT_SEED` | `0` | Base seed for shared training episodes |
 | `AUTOHARNESS_EXECUTION_TIMEOUT` | `10` | Per-action execution timeout in seconds |
 | `AUTOHARNESS_MAX_SOURCE_SIZE` | `32768` | Maximum generated policy source size |
 | `AUTOHARNESS_LOG_LEVEL` | unset | Logging level, such as `INFO` or `DEBUG` |
@@ -156,8 +173,9 @@ artifacts/<run-id>/
 └── tree.json
 ```
 
-`best.py` is the best generated policy for the run. Candidate source files, rollout results, events,
-and the candidate tree are kept for debugging and analysis.
+`best.py` is the best generated policy for the run. Rollout files use schema version 2 and contain
+aggregate assessment fields plus every seeded episode (including the deterministic representative).
+Candidate source files, events, and the candidate tree are kept for debugging and analysis.
 
 ## Development
 

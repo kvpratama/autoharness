@@ -10,6 +10,8 @@ import pytest
 
 from autoharness.harness_as_policy.artifacts import ArtifactStore
 from autoharness.harness_as_policy.models import (
+    CandidateAssessment,
+    EpisodeResult,
     Event,
     RolloutResult,
     StepResult,
@@ -50,47 +52,74 @@ def test_write_candidate_source(store: ArtifactStore) -> None:
     assert "propose_action" in path.read_text()
 
 
-def test_write_rollout(store: ArtifactStore) -> None:
-    """write_rollout persists rollout result as JSON."""
+def test_write_assessment_preserves_aggregate_and_episodes(store: ArtifactStore) -> None:
+    """write_assessment persists version-two aggregate and episode data."""
     result = RolloutResult(
-        steps=[
-            StepResult(
-                observation="obs",
-                action="[A C]",
-                is_legal=True,
-                reward=0.0,
-                terminated=False,
-                feedback="",
-            )
-        ],
+        steps=[StepResult("obs", "[A C]", True, 0.0, False, "")],
         heuristic=0.5,
         terminal_reward=0.0,
         legal_action_count=1,
         termination_reason=TerminationReason.STEP_LIMIT,
         failure_summary=None,
+        last_observation="last",
     )
-    store.write_rollout(candidate_id="005", result=result)
+    assessment = CandidateAssessment(
+        episodes=[
+            EpisodeResult(
+                11,
+                RolloutResult([], 1.0, 1.0, 3, TerminationReason.ENVIRONMENT_TERMINATION, None),
+            ),
+            EpisodeResult(22, result),
+        ],
+        heuristic=0.75,
+        terminal_reward=0.5,
+        legal_action_count=4,
+        failure_count=0,
+        termination_counts={
+            TerminationReason.ENVIRONMENT_TERMINATION: 1,
+            TerminationReason.STEP_LIMIT: 1,
+        },
+        representative_episode_index=1,
+        termination_reason=TerminationReason.STEP_LIMIT,
+        failure_summary=None,
+        last_observation="last",
+    )
+    store.write_assessment(candidate_id="005", assessment=assessment)
     path = store.root / store.run_id / "rollouts" / "005.json"
     assert path.exists()
     data = json.loads(path.read_text())
-    assert data["heuristic"] == 0.5
+    assert data["schema_version"] == 2
+    assert data["aggregate"]["heuristic"] == 0.75
+    assert data["aggregate"]["termination_reason"] == "step_limit"
+    assert data["aggregate"]["failure_summary"] is None
+    assert data["aggregate"]["last_observation"] == "last"
+    assert data["representative_episode_index"] == 1
+    assert [episode["seed"] for episode in data["episodes"]] == [11, 22]
+    assert "heuristic" not in data
 
 
-def test_write_rollout_serializes_legality_disagreement(store: ArtifactStore) -> None:
-    """write_rollout persists the legality disagreement termination value."""
-    result = RolloutResult(
-        steps=[],
+def test_write_failed_assessment_has_no_episodes(store: ArtifactStore) -> None:
+    """Failed refinements retain a contract-failure aggregate without episodes."""
+    assessment = CandidateAssessment(
+        episodes=[],
         heuristic=0.0,
         terminal_reward=0.0,
         legal_action_count=0,
-        termination_reason=TerminationReason("legality_disagreement"),
-        failure_summary="checker=True, environment=False",
+        failure_count=1,
+        termination_counts={TerminationReason.CONTRACT_FAILURE: 1},
+        representative_episode_index=None,
+        termination_reason=TerminationReason.CONTRACT_FAILURE,
+        failure_summary="failed",
+        last_observation=None,
     )
-
-    store.write_rollout(candidate_id="006", result=result)
-
+    store.write_assessment("006", assessment)
     data = json.loads((store.run_dir / "rollouts" / "006.json").read_text())
-    assert data["termination_reason"] == "legality_disagreement"
+    assert data["episodes"] == []
+    assert data["representative_episode_index"] is None
+    assert data["aggregate"]["termination_counts"] == {"contract_failure": 1}
+    assert data["aggregate"]["termination_reason"] == "contract_failure"
+    assert data["aggregate"]["failure_summary"] == "failed"
+    assert data["aggregate"]["last_observation"] is None
 
 
 def test_write_event(store: ArtifactStore) -> None:

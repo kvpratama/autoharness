@@ -63,6 +63,28 @@ def test_thompson_seed_default() -> None:
     assert settings.thompson_seed == 42
 
 
+def test_stochastic_training_defaults() -> None:
+    settings = _settings()
+    assert settings.training_rollouts is None
+    assert settings.environment_seed == 0
+
+
+def test_training_rollouts_must_be_positive() -> None:
+    with pytest.raises(ValidationError):
+        _settings(training_rollouts=0)
+
+
+def test_stochastic_training_settings_from_environment() -> None:
+    with patch.dict(
+        os.environ,
+        {"AUTOHARNESS_TRAINING_ROLLOUTS": "7", "AUTOHARNESS_ENVIRONMENT_SEED": "99"},
+        clear=True,
+    ):
+        settings = _settings()
+    assert settings.training_rollouts == 7
+    assert settings.environment_seed == 99
+
+
 def test_execution_timeout_default() -> None:
     """Default execution timeout is 10 seconds."""
     settings = _settings()

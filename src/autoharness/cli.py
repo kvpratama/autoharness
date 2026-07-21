@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import logging
 import sys
 from pathlib import Path
@@ -20,11 +21,8 @@ from autoharness.harness_as_policy.evaluation import (
 from autoharness.harness_as_policy.live_policy import LivePolicy
 from autoharness.harness_as_policy.models import Profile, TerminationReason
 from autoharness.harness_as_policy.refiner import Refiner
+from autoharness.harness_as_policy.registry import get_environment_spec
 from autoharness.harness_as_policy.search import synthesize
-from autoharness.harness_as_policy.tower_of_hanoi import (
-    DIFFICULTY_MAP,
-    TowerOfHanoiAdapter,
-)
 
 
 class SettingsKwargs(TypedDict, total=False):
@@ -38,6 +36,8 @@ class SettingsKwargs(TypedDict, total=False):
     thompson_seed: int
     execution_timeout: int
     max_source_size: int
+    environment_seed: int
+    training_rollouts: int
 
 
 class SynthesisResult(TypedDict):
@@ -119,6 +119,8 @@ def _build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Maximum policy source size in bytes",
     )
+    syn.add_argument("--training-rollouts", type=int, default=None)
+    syn.add_argument("--environment-seed", type=int, default=None)
 
     ev = subparsers.add_parser(
         "evaluate",
@@ -160,11 +162,6 @@ def _build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-_ENV_TO_DIFFICULTY: dict[str, str] = {
-    env_id: diff for diff, (env_id, _, _) in DIFFICULTY_MAP.items()
-}
-
-
 def synthesize_cmd(
     args: argparse.Namespace | None = None,
 ) -> SynthesisResult:
@@ -190,13 +187,21 @@ def synthesize_cmd(
         settings_kwargs["execution_timeout"] = args.execution_timeout
     if args.max_source_size is not None:
         settings_kwargs["max_source_size"] = args.max_source_size
+    if args.training_rollouts is not None:
+        settings_kwargs["training_rollouts"] = args.training_rollouts
+    if args.environment_seed is not None:
+        settings_kwargs["environment_seed"] = args.environment_seed
 
-    settings = Settings(**settings_kwargs)
+    try:
+        settings = Settings(**settings_kwargs)
+    except ValidationError as exc:
+        parser.error(str(exc))
 
-    if settings.env_id not in _ENV_TO_DIFFICULTY:
-        valid = ", ".join(sorted(_ENV_TO_DIFFICULTY))
-        parser.error(f"Unknown environment ID '{settings.env_id}'. Valid options: {valid}")
-    adapter = TowerOfHanoiAdapter(difficulty=_ENV_TO_DIFFICULTY[settings.env_id])
+    try:
+        spec = get_environment_spec(settings.env_id)
+    except ValueError as exc:
+        parser.error(str(exc))
+    adapter = spec.create_adapter()
 
     refiner = Refiner(model_id=settings.model)
 
@@ -210,6 +215,12 @@ def synthesize_cmd(
         execution_timeout=settings.execution_timeout,
         max_source_size=settings.max_source_size,
         model_id=settings.model,
+        environment_seed=settings.environment_seed,
+        training_rollouts=(
+            spec.default_training_rollouts
+            if settings.training_rollouts is None
+            else settings.training_rollouts
+        ),
     )
     print(f"Run ID: {result.get('run_id', 'unknown')}")
     print(f"Stop reason: {result.get('stop_reason', 'unknown')}")
@@ -225,9 +236,19 @@ def evaluate_cmd(run_dir: Path) -> list[EvaluationResult] | None:
     if not best_policy_path.exists():
         print(f"Error: no best.py found in {run_dir}", file=sys.stderr)
         return None
+    config_path = run_dir / "config.json"
+    if not config_path.exists():
+        print(f"Error: no config.json found in {run_dir}", file=sys.stderr)
+        return None
+    try:
+        config = json.loads(config_path.read_text())
+        spec = get_environment_spec(config["env_id"])
+    except (OSError, json.JSONDecodeError, KeyError, TypeError, ValueError) as exc:
+        print(f"Error: invalid run environment configuration: {exc}", file=sys.stderr)
+        return None
     source = best_policy_path.read_text()
-    results = evaluate_policy(source=source)
-    summary = format_evaluation_summary(results)
+    results = evaluate_policy(source=source, spec=spec)
+    summary = format_evaluation_summary(results, spec.family)
     print(summary)
 
     from autoharness.harness_as_policy.artifacts import ArtifactStore
@@ -273,8 +294,21 @@ def evaluate_baseline_cmd(
     total_output_tokens = 0
     total_estimated_cost = 0.0
 
-    for diff_key, (env_id, _max_steps, optimal) in DIFFICULTY_MAP.items():
-        adapter = TowerOfHanoiAdapter(difficulty=diff_key)
+    config_path = run_dir / "config.json"
+    if not config_path.exists():
+        print(f"Error: no config.json found in {run_dir}", file=sys.stderr)
+        return None
+    try:
+        config = json.loads(config_path.read_text())
+        spec = get_environment_spec(config["env_id"])
+    except (OSError, json.JSONDecodeError, KeyError, TypeError, ValueError) as exc:
+        print(f"Error: invalid run environment configuration: {exc}", file=sys.stderr)
+        return None
+
+    for case in spec.evaluation_cases:
+        adapter = case.create_adapter()
+        env_id = adapter.env_id
+        optimal = case.optimal_steps or adapter.max_steps
         live_policy = LivePolicy(
             model_id=model_id,
             input_price_per_million=input_price,
@@ -387,7 +421,7 @@ def evaluate_baseline_cmd(
                 )
             )
 
-    summary = format_evaluation_summary(results)
+    summary = format_evaluation_summary(results, spec.family)
     summary += f"\n  Model calls: {total_model_calls}\n"
     summary += f"  Input tokens: {total_input_tokens}\n"
     summary += f"  Output tokens: {total_output_tokens}\n"
@@ -471,7 +505,11 @@ def main(args: list[str] | None = None) -> int:
         if results is None:
             return 1
     elif parsed.command == "evaluate-baseline":
-        evaluate_baseline_cmd(parsed.run, parsed.model, parsed.input_price, parsed.output_price)
+        results = evaluate_baseline_cmd(
+            parsed.run, parsed.model, parsed.input_price, parsed.output_price
+        )
+        if results is None:
+            return 1
     return 0
 
 

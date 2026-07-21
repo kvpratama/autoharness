@@ -319,6 +319,26 @@ def test_should_stop_success() -> None:
     assert "success" in reason
 
 
+def test_should_stop_strict_equality() -> None:
+    """Should not stop early when candidate heuristic is close to but not exactly 1.0."""
+    candidates = {
+        "000": Candidate(
+            id="000",
+            parent_id=None,
+            source="",
+            heuristic=0.999,
+            terminal_reward=0.999,
+            legal_action_count=7,
+            termination_reason=TerminationReason.ENVIRONMENT_TERMINATION,
+            failure_summary=None,
+            iteration=0,
+            expansion_count=0,
+        ),
+    }
+    reason = should_stop(candidates, iteration=1, max_refinements=8)
+    assert reason is None
+
+
 def test_should_stop_budget_exhausted() -> None:
     """Should stop when iteration reaches max_refinements."""
     reason = should_stop({}, iteration=8, max_refinements=8)
@@ -363,13 +383,17 @@ def test_synthesize_empty_policies() -> None:
 
 def test_synthesize_persists_order_matching_find_best_candidate() -> None:
     """Persisted ranking exactly matches final candidate selection."""
+    failing_source = """def propose_action(observation: str) -> str:
+    raise RuntimeError("failing policy")
+"""
     with tempfile.TemporaryDirectory() as tmpdir:
         result = synthesize(
             adapter=FakeAdapter(),
             profile=Profile.SMOKE,
-            refiner=FakeRefiner(responses=[ACCEPTED_BY_CHECKER_SOURCE, ACCEPTED_BY_CHECKER_SOURCE]),
+            refiner=FakeRefiner(responses=[ACCEPTED_BY_CHECKER_SOURCE, failing_source]),
             artifact_root=Path(tmpdir),
             refinements=2,
+            training_rollouts=2,
         )
         tree_path = Path(tmpdir) / result["run_id"] / "tree.json"
         tree = json.loads(tree_path.read_text())
@@ -390,6 +414,8 @@ def test_synthesize_persists_order_matching_find_best_candidate() -> None:
             failure_summary=data["failure_summary"],
             iteration=data["iteration"],
             expansion_count=data["expansion_count"],
+            failure_count=data["failure_count"],
+            episode_count=data["episode_count"],
         )
         for candidate_id, data in tree["candidates"].items()
         if data["ranking"]["eligible"]
@@ -412,18 +438,29 @@ def test_synthesize_persists_order_matching_find_best_candidate() -> None:
     assert tree["candidates"]["001"]["ranking"]["components"] == {
         "heuristic": 0.5,
         "reward": 0.0,
-        "legal_actions": 10,
+        "legal_actions": 20,
         "failures": 0,
         "iteration": 1,
     }
+    assert tree["candidates"]["002"]["failure_count"] == 2
+    assert tree["candidates"]["002"]["episode_count"] == 2
+    assert tree["candidates"]["002"]["ranking"]["components"] == {
+        "heuristic": 0.0,
+        "reward": 0.0,
+        "legal_actions": 0,
+        "failures": 2,
+        "iteration": 2,
+    }
+    assert reconstructed_candidates["002"].failure_count == 2
+    assert reconstructed_candidates["002"].episode_count == 2
     assert tree["ranking"]["winner_explanation"] == {
         "winner_id": "001",
         "runner_up_id": "002",
         "outcome": "decisive_component",
-        "tied_components": ["heuristic", "reward", "legal_actions", "failures"],
-        "decisive_component": "iteration",
-        "winner_value": 1,
-        "runner_up_value": 2,
+        "tied_components": [],
+        "decisive_component": "heuristic",
+        "winner_value": 0.5,
+        "runner_up_value": 0.0,
     }
 
 
@@ -583,11 +620,13 @@ class FakeAdapter:
         self.max_steps = 10
         self.reject_actions = reject_actions
         self.step_calls: list[str] = []
+        self.reset_seeds: list[int | None] = []
 
     def create(self) -> None:
         pass
 
     def reset(self, seed: int | None = None) -> str:
+        self.reset_seeds.append(seed)
         return "initial observation"
 
     def step(self, action: str) -> StepResult:
@@ -658,6 +697,26 @@ def is_legal_action(observation: str, action: str) -> bool:
 """
 
 
+def test_synthesize_reuses_shared_environment_seeds_for_every_candidate(tmp_path: Path) -> None:
+    """All assessed candidates receive the same ordered training seed list."""
+    adapter = FakeAdapter()
+    result = synthesize(
+        adapter=adapter,
+        profile=Profile.SMOKE,
+        refiner=FakeRefiner([ACCEPTED_BY_CHECKER_SOURCE, ACCEPTED_BY_CHECKER_SOURCE]),
+        artifact_root=tmp_path,
+        refinements=2,
+        environment_seed=17,
+        training_rollouts=3,
+    )
+    config = json.loads((tmp_path / result["run_id"] / "config.json").read_text())
+    seeds = config["training_episode_seeds"]
+    assert len(seeds) == 3
+    assert adapter.reset_seeds == [None, *seeds, *seeds]
+    assert config["environment_seed"] == 17
+    assert config["training_rollouts"] == 3
+
+
 def test_synthesize_refines_only_action_after_checker_rejection() -> None:
     """Checker rejection preserves the checker on the next refinement."""
     adapter = FakeAdapter()
@@ -673,9 +732,6 @@ def test_synthesize_refines_only_action_after_checker_rejection() -> None:
 
     assert refiner.scopes == [True, False]
     assert refiner.feedback[1][0] == (
-        "Policy legality checker rejected action '[X Y]' (checker=False)"
-    )
-    assert refiner.feedback[1][1] == (
         "is_legal_action rejected the proposed action; refine propose_action only"
     )
     assert adapter.step_calls == ["[X Y]"] * adapter.max_steps
@@ -696,9 +752,5 @@ def test_synthesize_refines_both_after_legality_disagreement() -> None:
 
     assert refiner.scopes == [True, True]
     assert refiner.feedback[1][0] == (
-        "Legality disagreement: checker=True, environment=False; environment feedback: Illegal "
-        "action"
-    )
-    assert refiner.feedback[1][1] == (
         "is_legal_action accepted an action that the environment rejected; refine both functions"
     )

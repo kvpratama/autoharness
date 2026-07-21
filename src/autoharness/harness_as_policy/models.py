@@ -57,6 +57,30 @@ class RolloutResult:
 
 
 @dataclass
+class EpisodeResult:
+    """One seeded episode in a candidate assessment."""
+
+    seed: int
+    rollout: RolloutResult
+
+
+@dataclass
+class CandidateAssessment:
+    """Aggregate and individual outcomes for one policy candidate."""
+
+    episodes: list[EpisodeResult]
+    heuristic: float
+    terminal_reward: float
+    legal_action_count: int
+    failure_count: int
+    termination_counts: dict[TerminationReason, int]
+    representative_episode_index: int | None
+    termination_reason: TerminationReason | None
+    failure_summary: str | None
+    last_observation: str | None
+
+
+@dataclass
 class Candidate:
     """A node in the program refinement tree."""
 
@@ -71,6 +95,9 @@ class Candidate:
     iteration: int
     expansion_count: int = 0
     last_observation: str | None = None
+    failure_count: int = 0
+    episode_count: int = 0
+    assessment: CandidateAssessment | None = None
 
 
 @dataclass
@@ -101,15 +128,12 @@ class CandidateRankKey:
 
     @classmethod
     def from_candidate(cls, c: Candidate) -> CandidateRankKey:
-        failures = (
-            1
-            if c.termination_reason
-            in (
-                TerminationReason.EXECUTION_FAILURE,
-                TerminationReason.CONTRACT_FAILURE,
-            )
-            else 0
-        )
+        failures = c.failure_count
+        if failures == 0 and c.termination_reason in (
+            TerminationReason.EXECUTION_FAILURE,
+            TerminationReason.CONTRACT_FAILURE,
+        ):
+            failures = 1
         return cls(
             heuristic=c.heuristic,
             reward=c.terminal_reward,

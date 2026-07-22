@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
-from typing import Any
 from unittest.mock import patch
 
 import pytest
@@ -13,7 +12,7 @@ from pydantic_settings import SettingsConfigDict
 
 from autoharness.harness_as_policy.config import Settings, _LogLevelOnlySettings
 
-_BASE: dict[str, Any] = {"model": "test-model"}
+_BASE: dict[str, object] = {"model": "test-model"}
 
 
 class _EnvOnlyLogLevelSettings(_LogLevelOnlySettings):
@@ -26,10 +25,10 @@ class _EnvOnlyLogLevelSettings(_LogLevelOnlySettings):
     )
 
 
-def _settings(**overrides: Any) -> Settings:
+def _settings(**overrides: object) -> Settings:
     kwargs = dict(_BASE)
     kwargs.update(overrides)
-    return Settings(**kwargs)
+    return Settings(**kwargs)  # type: ignore
 
 
 def test_default_profile_is_smoke() -> None:

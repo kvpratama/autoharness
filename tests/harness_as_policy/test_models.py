@@ -181,7 +181,7 @@ def test_profile_values() -> None:
 
 def test_termination_reason_values() -> None:
     """TerminationReason has all expected members."""
-    reasons = {
+    assert set(TerminationReason) == {
         TerminationReason.ILLEGAL_ACTION,
         TerminationReason.POLICY_REJECTED_ACTION,
         TerminationReason.LEGALITY_DISAGREEMENT,
@@ -190,4 +190,3 @@ def test_termination_reason_values() -> None:
         TerminationReason.EXECUTION_FAILURE,
         TerminationReason.CONTRACT_FAILURE,
     }
-    assert len(reasons) == 7

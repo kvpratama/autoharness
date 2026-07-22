@@ -1,7 +1,7 @@
 ## Project Overview
 
 AutoHarness is a Python implementation of a harness-as-policy synthesis loop for game-playing
-agents. The current implementation targets TextArena Tower of Hanoi environments: it asks an LLM
+agents. The current implementation targets TextArena environments (Tower of Hanoi, Blackjack): it asks an LLM
 to refine a Python policy module, executes the generated `propose_action(observation: str) -> str`
 function in an isolated subprocess, rolls the policy out against the environment, ranks candidates,
 and persists run artifacts for later evaluation.

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import tempfile
 from pathlib import Path
 
 import pytest
@@ -20,9 +19,8 @@ from autoharness.harness_as_policy.models import (
 
 
 @pytest.fixture
-def store() -> ArtifactStore:
-    tmpdir = tempfile.mkdtemp()
-    return ArtifactStore(root=Path(tmpdir), run_id="test-run-001")
+def store(tmp_path: Path) -> ArtifactStore:
+    return ArtifactStore(root=tmp_path, run_id="test-run-001")
 
 
 def test_artifact_store_creates_directories(store: ArtifactStore) -> None:
@@ -277,7 +275,7 @@ def test_load_events_and_write_event_recovery(store: ArtifactStore) -> None:
 
     # Manually append an interrupted/partially written JSON record to the file
     path = store.run_dir / "events.jsonl"
-    with open(path, "a") as f:
+    with path.open("a", encoding="utf-8") as f:
         f.write('{"iteration": 2, "event_type": "refine"\n')  # Incomplete JSON (no closing brace)
 
     # Verify load_events filters out/ignores the malformed trailing line

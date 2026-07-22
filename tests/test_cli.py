@@ -12,10 +12,10 @@ from unittest.mock import Mock, patch
 import pytest
 
 from autoharness.cli import evaluate_baseline_cmd, evaluate_cmd, main, synthesize_cmd
+from autoharness.harness_as_policy.environments.registry import EnvironmentSpec, EvaluationCase
 from autoharness.harness_as_policy.evaluation import EvaluationResult
 from autoharness.harness_as_policy.live_policy import LiveActionResult
 from autoharness.harness_as_policy.models import StepResult, TerminationReason
-from autoharness.harness_as_policy.registry import EnvironmentSpec, EvaluationCase
 
 
 @dataclass
@@ -387,7 +387,7 @@ def test_evaluate_baseline_cmd_maps_each_exit_to_structured_termination_data(
             patch("autoharness.cli.get_environment_spec", return_value=spec),
             patch("autoharness.cli.LivePolicy", return_value=live_policy),
             patch(
-                "autoharness.harness_as_policy.tower_of_hanoi.DIFFICULTY_MAP",
+                "autoharness.harness_as_policy.environments.tower_of_hanoi.DIFFICULTY_MAP",
                 {"v0": ("Fake-v0", 1, 1)},
             ),
         ):

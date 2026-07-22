@@ -13,6 +13,7 @@ from dotenv import load_dotenv
 from pydantic import ValidationError
 
 from autoharness.harness_as_policy.config import Settings, _LogLevelOnlySettings
+from autoharness.harness_as_policy.environments.registry import get_environment_spec
 from autoharness.harness_as_policy.evaluation import (
     EvaluationResult,
     evaluate_policy,
@@ -21,7 +22,6 @@ from autoharness.harness_as_policy.evaluation import (
 from autoharness.harness_as_policy.live_policy import LivePolicy
 from autoharness.harness_as_policy.models import Profile, TerminationReason
 from autoharness.harness_as_policy.refiner import Refiner
-from autoharness.harness_as_policy.registry import get_environment_spec
 from autoharness.harness_as_policy.search import synthesize
 
 

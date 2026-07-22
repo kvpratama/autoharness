@@ -49,3 +49,4 @@ select = ["E", "F", "I", "UP", "B", "C4", "PT"]
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 pythonpath = ["src", "."]
+testpaths = ["tests"]

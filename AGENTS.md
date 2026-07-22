@@ -1,7 +1,7 @@
 ## Project Overview
 
 AutoHarness is a Python implementation of a harness-as-policy synthesis loop for game-playing
-agents. The current implementation targets TextArena Tower of Hanoi environments: it asks an LLM
+agents. The current implementation targets TextArena environments (Tower of Hanoi, Blackjack): it asks an LLM
 to refine a Python policy module, executes the generated `propose_action(observation: str) -> str`
 function in an isolated subprocess, rolls the policy out against the environment, ranks candidates,
 and persists run artifacts for later evaluation.
@@ -20,7 +20,8 @@ The main package is `autoharness`; the active implementation lives under
   sampling in `search.py`
 - **Execution**: generated policies are AST-validated and run in isolated Python subprocesses with
   CPU, memory, process, file-size, timeout, import, and output limits
-- **Environment**: TextArena Tower of Hanoi adapter in `tower_of_hanoi.py`
+- **Environment**: built-in TextArena adapters live under
+  `src/autoharness/harness_as_policy/environments/`
 - **Models**: Anthropic, OpenAI, or Google GenAI via LangChain `init_chat_model`
 - **Tracing**: optional Langfuse callback integration when `LANGFUSE_ENABLED` is truthy
 - **Configuration**: `pydantic-settings` plus `.env` loading through `python-dotenv`
@@ -39,23 +40,45 @@ The main package is `autoharness`; the active implementation lives under
 ├── playground.py                       # manual Langfuse/refiner debugging script
 ├── pyproject.toml                      # package metadata, scripts, Ruff, pytest config
 ├── artifacts/                          # generated synthesis/evaluation outputs
-└── src/autoharness/
-    ├── cli.py                          # top-level CLI: synthesize, evaluate, evaluate-baseline
+├── src/autoharness/
+│   ├── cli.py                          # top-level CLI: synthesize, evaluate, evaluate-baseline
+│   └── harness_as_policy/
+│       ├── artifacts.py                # atomic artifact persistence
+│       ├── config.py                   # Settings and AUTOHARNESS_* env configuration
+│       ├── environments/
+│       │   ├── __init__.py             # package marker
+│       │   ├── base.py                 # EnvironmentAdapter protocol
+│       │   ├── blackjack.py            # TextArena Blackjack adapter
+│       │   ├── registry.py             # EvaluationCase, EnvironmentSpec, lookup
+│       │   └── tower_of_hanoi.py       # TextArena Tower of Hanoi adapter
+│       ├── evaluation.py               # held-out generated-policy evaluation
+│       ├── executor.py                 # policy validation and subprocess execution sandbox
+│       ├── live_policy.py              # live LLM action baseline
+│       ├── models.py                   # dataclasses, enums, ranking key, heuristic
+│       ├── refiner.py                  # LLM policy refinement boundary
+│       ├── rollout.py                  # single-policy rollout evaluator
+│       └── search.py                   # synthesis loop and candidate selection
+└── tests/
+    ├── test_cli.py
     └── harness_as_policy/
-        ├── artifacts.py                # atomic artifact persistence
-        ├── config.py                   # Settings and AUTOHARNESS_* env configuration
-        ├── environment.py              # adapter protocol
-        ├── evaluation.py               # held-out generated-policy evaluation
-        ├── executor.py                 # policy validation and subprocess execution sandbox
-        ├── live_policy.py              # live LLM action baseline
-        ├── models.py                   # dataclasses, enums, ranking key, heuristic
-        ├── refiner.py                  # LLM policy refinement boundary
-        ├── rollout.py                  # single-policy rollout evaluator
-        ├── search.py                   # synthesis loop and candidate selection
-        └── tower_of_hanoi.py           # TextArena Tower of Hanoi adapter
+        ├── environments/
+        │   ├── test_base.py
+        │   ├── test_blackjack.py
+        │   ├── test_registry.py
+        │   └── test_tower_of_hanoi.py
+        ├── test_artifacts.py
+        ├── test_assessment.py
+        ├── test_config.py
+        ├── test_evaluation.py
+        ├── test_executor.py
+        ├── test_live_policy.py
+        ├── test_models.py
+        ├── test_refiner.py
+        ├── test_rollout.py
+        └── test_search.py
 ```
 
-Tests are co-located with their target modules and named `<module>_test.py`.
+Tests live under `tests/`, mirror the source hierarchy, and are named `test_<module>.py`.
 
 ---
 
@@ -69,7 +92,7 @@ uv sync
 uv run pytest
 
 # Run a focused test file
-uv run pytest src/autoharness/harness_as_policy/executor_test.py
+uv run pytest tests/harness_as_policy/test_executor.py
 
 # Lint and format
 uv run ruff check .
@@ -187,11 +210,11 @@ Preserve these constraints when changing the executor, refiner prompt, or evalua
 - Test runner: `uv run pytest`
 - Use Red-Green-Refactor TDD for behavior changes.
 - `pytest-asyncio` is configured with `asyncio_mode = "auto"` in `pyproject.toml`.
-- Tests are co-located with their target module and named `<module>_test.py`.
+- Tests live under `tests/`, mirror the source hierarchy, and are named `test_<module>.py`.
 - Mock all external model providers and tracing/network boundaries in unit tests.
 - Do not hit live Anthropic, OpenAI, Google, Langfuse, or other network services in unit tests.
-- Prefer small fakes like the existing fake chat models/adapters in `refiner_test.py` and
-  `search_test.py`.
+- Prefer small fakes like the existing fake chat models/adapters in `test_refiner.py` and
+  `test_search.py`.
 - Mark integration tests that require live services or long-running environments with
   `@pytest.mark.integration` and keep them skipped by default.
 

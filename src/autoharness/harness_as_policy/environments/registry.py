@@ -6,9 +6,12 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from functools import partial
 
-from autoharness.harness_as_policy.blackjack import BlackjackAdapter
-from autoharness.harness_as_policy.environment import EnvironmentAdapter
-from autoharness.harness_as_policy.tower_of_hanoi import DIFFICULTY_MAP, TowerOfHanoiAdapter
+from autoharness.harness_as_policy.environments.base import EnvironmentAdapter
+from autoharness.harness_as_policy.environments.blackjack import BlackjackAdapter
+from autoharness.harness_as_policy.environments.tower_of_hanoi import (
+    DIFFICULTY_MAP,
+    TowerOfHanoiAdapter,
+)
 
 AdapterFactory = Callable[[], EnvironmentAdapter]
 

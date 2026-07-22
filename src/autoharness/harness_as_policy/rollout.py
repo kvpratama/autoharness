@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Protocol
 
-from autoharness.harness_as_policy.environment import EnvironmentAdapter
+from autoharness.harness_as_policy.environments.base import EnvironmentAdapter
 from autoharness.harness_as_policy.executor import ExecutionResult, PolicyExecutor
 from autoharness.harness_as_policy.models import (
     RolloutResult,

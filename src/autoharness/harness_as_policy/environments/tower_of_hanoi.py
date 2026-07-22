@@ -3,11 +3,43 @@
 from __future__ import annotations
 
 import re
-from typing import Any
+from typing import Any, Protocol, cast, runtime_checkable
 
 import textarena as ta
 
 from autoharness.harness_as_policy.models import StepResult
+
+
+@runtime_checkable
+class _TowerState(Protocol):
+    """Structural interface for the TextArena Tower of Hanoi game-state object.
+
+    The concrete type is an internal TextArena detail; we only rely on
+    ``.rewards`` (a mapping from player-id to float) and ``.game_state``
+    (a dict containing board tower data).
+    """
+
+    @property
+    def rewards(self) -> dict[int, float]: ...
+
+    @property
+    def game_state(self) -> dict[str, Any]: ...
+
+
+class _TowerEnv(Protocol):
+    """Structural interface for the unwrapped inner TextArena environment.
+
+    After peeling off all ``env`` wrapper layers we only need ``state``
+    to read back the current game state and ``num_disks`` for the
+    completion fraction.
+    """
+
+    @property
+    def state(self) -> _TowerState: ...
+
+    @property
+    def num_disks(self) -> int: ...
+
 
 DIFFICULTY_MAP: dict[str, tuple[str, int, int]] = {
     "v0": ("TowerOfHanoi-v0", 14, 7),
@@ -36,8 +68,8 @@ class TowerOfHanoiAdapter:
         self._difficulty = difficulty
         self._env_id, self._max_steps, _ = DIFFICULTY_MAP[difficulty]
         self._env: ta.Env | None = None
-        self._state: Any = None
-        self._inner_env: Any = None
+        self._state: _TowerState | None = None
+        self._inner_env: _TowerEnv | None = None
         self._num_disks: int | None = None
         self._observation: str = ""
 
@@ -62,26 +94,57 @@ class TowerOfHanoiAdapter:
         return self._max_steps
 
     def create(self) -> None:
+        """Create the underlying TextArena Tower of Hanoi environment.
+
+        Must be called once before :meth:`reset` or :meth:`step`. Idempotent
+        — subsequent calls overwrite the internal environment reference.
+        """
         self._env = ta.make(self._env_id)
         # Find and save the inner env reference
-        e: Any = self._env
-        while hasattr(e, "env"):
-            e = e.env
-        self._inner_env = e
-        self._num_disks = int(e.num_disks)
+        environment: object = self._env
+        while hasattr(environment, "env"):
+            environment = getattr(environment, "env")  # noqa: B009 – `object` has no `.env`
+        self._inner_env = cast(_TowerEnv, environment)
+        self._num_disks = self._inner_env.num_disks
         self._state = None
 
     def reset(self, seed: int | None = None) -> str:
+        """Reset the environment and return the initial observation.
+
+        Must be called after :meth:`create` and before the first :meth:`step`.
+
+        Args:
+            seed: Optional RNG seed for deterministic replay.
+
+        Returns:
+            Initial observation string.
+        """
         if self._env is None:
             raise RuntimeError("Call create() before reset().")
         self._env.reset(num_players=1, seed=seed)
         # Capture the state created by reset
+        assert self._inner_env is not None
         self._state = self._inner_env.state
         obs_id, obs_text = self._env.get_observation()
         self._observation = str(obs_text) if obs_text is not None else ""
         return self._observation
 
     def step(self, action: str) -> StepResult:
+        """Validate a candidate action and submit it to the environment.
+
+        Must be called after :meth:`create` and :meth:`reset`. Validates the
+        action format before submission and checks the environment response
+        for invalid-move signals.
+
+        Args:
+            action: Raw action string from the policy (expected to be a
+                bracketed move such as ``[A C]`` or ``[A, C]``).
+
+        Returns:
+            A :class:`StepResult` with the new observation, whether the
+            action was legal, the current reward, a termination flag, and
+            optional feedback text.
+        """
         if self._env is None:
             raise RuntimeError("Call create() before step().")
         # Pre-submission validation: exactly one bracketed move
@@ -120,6 +183,7 @@ class TowerOfHanoiAdapter:
             )
         # Determine reward and termination
         if done:
+            assert self._state is not None
             reward = float(self._state.rewards.get(0, 0.0))
             return StepResult(
                 observation=self._observation,

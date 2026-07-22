@@ -184,7 +184,7 @@ Candidate source files, events, and the candidate tree are kept for debugging an
 uv run pytest
 
 # Run a focused test file
-uv run pytest src/autoharness/harness_as_policy/executor_test.py
+uv run pytest tests/harness_as_policy/test_executor.py
 
 # Lint and format
 uv run ruff check .
@@ -194,7 +194,7 @@ uv run ruff format .
 uv run ty check
 ```
 
-Tests are co-located with the modules they cover and named `<module>_test.py`.
+Tests live under `tests/`, mirror the source hierarchy, and are named `test_<module>.py`.
 
 ## Project Layout
 
@@ -204,15 +204,19 @@ src/autoharness/
 └── harness_as_policy/
     ├── artifacts.py
     ├── config.py
-    ├── environment.py
+    ├── environments/
+    │   ├── __init__.py
+    │   ├── base.py
+    │   ├── blackjack.py
+    │   ├── registry.py
+    │   └── tower_of_hanoi.py
     ├── evaluation.py
     ├── executor.py
     ├── live_policy.py
     ├── models.py
     ├── refiner.py
     ├── rollout.py
-    ├── search.py
-    └── tower_of_hanoi.py
+    └── search.py
 ```
 
 See `AGENTS.md` for contributor and coding-agent guidance.

@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import pytest
 
-from autoharness.harness_as_policy.blackjack import BlackjackAdapter
-from autoharness.harness_as_policy.environment import EnvironmentAdapter
+from autoharness.harness_as_policy.environments.base import EnvironmentAdapter
+from autoharness.harness_as_policy.environments.blackjack import BlackjackAdapter
 
 
 @pytest.fixture

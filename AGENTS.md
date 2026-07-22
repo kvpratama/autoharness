@@ -210,7 +210,7 @@ Preserve these constraints when changing the executor, refiner prompt, or evalua
 - Test runner: `uv run pytest`
 - Use Red-Green-Refactor TDD for behavior changes.
 - `pytest-asyncio` is configured with `asyncio_mode = "auto"` in `pyproject.toml`.
-- Tests are co-located with their target module and named `test_<module>.py`.
+- Tests live under `tests/`, mirror the source hierarchy, and are named `test_<module>.py`.
 - Mock all external model providers and tracing/network boundaries in unit tests.
 - Do not hit live Anthropic, OpenAI, Google, Langfuse, or other network services in unit tests.
 - Prefer small fakes like the existing fake chat models/adapters in `test_refiner.py` and

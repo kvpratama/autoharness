@@ -5,10 +5,10 @@ from __future__ import annotations
 import time
 from dataclasses import dataclass
 
-from autoharness.harness_as_policy.environment import EnvironmentAdapter
+from autoharness.harness_as_policy.environments.base import EnvironmentAdapter
+from autoharness.harness_as_policy.environments.registry import EnvironmentSpec
 from autoharness.harness_as_policy.executor import PolicyExecutor
 from autoharness.harness_as_policy.models import TerminationReason
-from autoharness.harness_as_policy.registry import EnvironmentSpec
 from autoharness.harness_as_policy.rollout import ExecutorProtocol, RolloutEvaluator
 
 

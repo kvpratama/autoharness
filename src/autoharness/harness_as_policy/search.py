@@ -17,7 +17,7 @@ from autoharness.harness_as_policy.assessment import (
     generate_episode_seeds,
     should_refine_legal_action,
 )
-from autoharness.harness_as_policy.environment import EnvironmentAdapter
+from autoharness.harness_as_policy.environments.base import EnvironmentAdapter
 from autoharness.harness_as_policy.executor import PolicyExecutor
 from autoharness.harness_as_policy.models import (
     Candidate,

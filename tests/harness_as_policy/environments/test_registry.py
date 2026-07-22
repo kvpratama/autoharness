@@ -4,9 +4,12 @@ from __future__ import annotations
 
 import pytest
 
-from autoharness.harness_as_policy.blackjack import BlackjackAdapter
-from autoharness.harness_as_policy.registry import get_environment_spec
-from autoharness.harness_as_policy.tower_of_hanoi import DIFFICULTY_MAP, TowerOfHanoiAdapter
+from autoharness.harness_as_policy.environments.blackjack import BlackjackAdapter
+from autoharness.harness_as_policy.environments.registry import get_environment_spec
+from autoharness.harness_as_policy.environments.tower_of_hanoi import (
+    DIFFICULTY_MAP,
+    TowerOfHanoiAdapter,
+)
 
 
 @pytest.mark.parametrize("difficulty", list(DIFFICULTY_MAP))

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from autoharness.harness_as_policy.environments.registry import EnvironmentSpec, EvaluationCase
 from autoharness.harness_as_policy.evaluation import (
     EvaluationResult,
     evaluate_policy,
@@ -12,7 +13,6 @@ from autoharness.harness_as_policy.evaluation import (
 )
 from autoharness.harness_as_policy.executor import ExecutionResult
 from autoharness.harness_as_policy.models import StepResult, TerminationReason
-from autoharness.harness_as_policy.registry import EnvironmentSpec, EvaluationCase
 
 
 @dataclass

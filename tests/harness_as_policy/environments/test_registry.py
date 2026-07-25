@@ -14,10 +14,11 @@ from autoharness.harness_as_policy.environments.tower_of_hanoi import (
 
 @pytest.mark.parametrize("difficulty", list(DIFFICULTY_MAP))
 def test_hanoi_ids_resolve_with_one_training_rollout(difficulty: str) -> None:
-    spec = get_environment_spec(DIFFICULTY_MAP[difficulty][0])
+    env_id, _max_steps, optimal_steps = DIFFICULTY_MAP[difficulty]
+    spec = get_environment_spec(env_id)
     assert isinstance(spec.create_adapter(), TowerOfHanoiAdapter)
     assert spec.default_training_rollouts == 1
-    assert len(spec.evaluation_cases) == 4
+    assert spec.optimal_steps == optimal_steps
     assert spec.family == "tower-of-hanoi"
 
 
@@ -25,7 +26,7 @@ def test_blackjack_resolves_with_five_training_rollouts() -> None:
     spec = get_environment_spec("Blackjack-v0")
     assert isinstance(spec.create_adapter(), BlackjackAdapter)
     assert spec.default_training_rollouts == 5
-    assert len(spec.evaluation_cases) == 1
+    assert spec.optimal_steps == 0
     assert spec.family == "blackjack"
 
 

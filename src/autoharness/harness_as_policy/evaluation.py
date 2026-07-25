@@ -1,119 +1,281 @@
-"""Held-out policy evaluation and optional live-LLM baseline."""
+"""Reproducible exact-environment policy evaluation."""
 
 from __future__ import annotations
 
 import time
-from dataclasses import dataclass
+from collections import Counter
+from collections.abc import Mapping, Sequence
+from dataclasses import asdict, dataclass
+from statistics import fmean
+from typing import cast
 
+from autoharness.harness_as_policy.assessment import generate_episode_seeds
 from autoharness.harness_as_policy.environments.base import EnvironmentAdapter
 from autoharness.harness_as_policy.environments.registry import EnvironmentSpec
 from autoharness.harness_as_policy.executor import PolicyExecutor
 from autoharness.harness_as_policy.models import TerminationReason
-from autoharness.harness_as_policy.rollout import ExecutorProtocol, RolloutEvaluator
+from autoharness.harness_as_policy.rollout import ActionProvider, ExecutorProtocol, RolloutEvaluator
+
+PAPER_1P_EPISODE_COUNT = 20
+PROTOCOL_SCHEMA_VERSION = 1
+PROTOCOL_NAME = "paper-1p"
+REWARD_METRIC = "arithmetic_mean"
+LEGALITY_METRIC = "legal_actions / proposed_action_attempts"
 
 
-@dataclass
+def _integer_list(value: object, name: str) -> list[int]:
+    if not isinstance(value, list) or any(
+        not isinstance(item, int) or isinstance(item, bool) for item in value
+    ):
+        raise ValueError(f"Evaluation protocol {name} must be a list of integers")
+    return cast(list[int], value)
+
+
+@dataclass(frozen=True)
+class EvaluationProtocol:
+    """Persisted exact-environment inputs shared by policy evaluations."""
+
+    env_id: str
+    episode_seeds: tuple[int, ...]
+    training_episode_seeds: tuple[int, ...]
+    schema_version: int = PROTOCOL_SCHEMA_VERSION
+    name: str = PROTOCOL_NAME
+
+    @property
+    def episode_count(self) -> int:
+        """Return the fixed number of evaluation episodes."""
+        return len(self.episode_seeds)
+
+    @classmethod
+    def create(
+        cls, env_id: str, environment_seed: int, training_episode_seeds: Sequence[int]
+    ) -> EvaluationProtocol:
+        """Create deterministic seeds disjoint from synthesis episodes."""
+        seeds = generate_episode_seeds(
+            environment_seed, PAPER_1P_EPISODE_COUNT, training_episode_seeds
+        )
+        return cls(env_id, tuple(seeds), tuple(training_episode_seeds))
+
+    @classmethod
+    def from_dict(cls, data: Mapping[str, object], expected_env_id: str) -> EvaluationProtocol:
+        """Validate and deserialize a persisted protocol."""
+        if data.get("schema_version") != 1:
+            raise ValueError("Evaluation protocol schema must be 1")
+        if data.get("name") != PROTOCOL_NAME:
+            raise ValueError("Evaluation protocol name must be paper-1p")
+        if data.get("env_id") != expected_env_id:
+            raise ValueError("Evaluation protocol environment does not match run")
+        if data.get("episode_count") != 20:
+            raise ValueError("Evaluation protocol episode_count must be 20")
+        seeds = _integer_list(data.get("episode_seeds"), "episode_seeds")
+        training = _integer_list(data.get("training_episode_seeds"), "training_episode_seeds")
+        if len(seeds) != 20:
+            raise ValueError("Evaluation protocol requires 20 episode seeds")
+        if len(set(seeds)) != 20:
+            raise ValueError("Evaluation protocol episode seeds must be unique")
+        if set(seeds) & set(training):
+            raise ValueError("Evaluation and training seeds must be disjoint")
+        if data.get("metrics") != {"reward": REWARD_METRIC, "legal_action_rate": LEGALITY_METRIC}:
+            raise ValueError("Evaluation protocol metrics do not match paper-1p")
+        return cls(expected_env_id, tuple(seeds), tuple(training))
+
+    def to_dict(self) -> dict[str, object]:
+        """Serialize this protocol as stable JSON-compatible data."""
+        return {
+            "schema_version": self.schema_version,
+            "name": self.name,
+            "env_id": self.env_id,
+            "episode_count": self.episode_count,
+            "episode_seeds": list(self.episode_seeds),
+            "training_episode_seeds": list(self.training_episode_seeds),
+            "metrics": {"reward": REWARD_METRIC, "legal_action_rate": LEGALITY_METRIC},
+        }
+
+
+@dataclass(frozen=True)
 class EvaluationResult:
-    """Result of evaluating a policy on one environment variant."""
+    """Outcome of one seeded exact-environment episode."""
 
+    seed: int
     env_id: str
     solved: bool
     reward: float
     legal_action_count: int
+    action_attempt_count: int
     steps_used: int
     optimal_steps: int
-    termination_reason: TerminationReason | None
+    termination_reason: TerminationReason
     failure_summary: str | None
     latency: float
     execution_failure: bool
+
+
+@dataclass(frozen=True)
+class EvaluationAggregate:
+    """Canonical aggregates across all protocol episodes."""
+
+    mean_reward: float
+    legal_action_count: int
+    action_attempt_count: int
+    legal_action_rate: float | None
+    termination_counts: dict[TerminationReason, int]
+    execution_failure_count: int
+    total_latency: float
+    mean_latency: float
+
+
+@dataclass(frozen=True)
+class EvaluationUsage:
+    """Optional model usage for a live-policy report."""
+
+    model_call_count: int
+    input_tokens: int
+    output_tokens: int
+    estimated_cost_usd: float | None
+
+
+@dataclass(frozen=True)
+class EvaluationReport:
+    """Validated per-episode outcomes and canonical aggregates."""
+
+    policy_kind: str
+    protocol: EvaluationProtocol
+    results: list[EvaluationResult]
+    aggregate: EvaluationAggregate
+    usage: EvaluationUsage | None = None
+
+    @classmethod
+    def create(
+        cls,
+        policy_kind: str,
+        protocol: EvaluationProtocol,
+        results: list[EvaluationResult],
+        usage: EvaluationUsage | None = None,
+    ) -> EvaluationReport:
+        """Validate ordered results and calculate canonical metrics."""
+        if len(results) != protocol.episode_count:
+            raise ValueError("Evaluation results must contain exactly 20 episodes")
+        if [result.seed for result in results] != list(protocol.episode_seeds):
+            raise ValueError("Evaluation result seeds must match protocol order")
+        if any(result.env_id != protocol.env_id for result in results):
+            raise ValueError("Evaluation result environment must match protocol")
+        legal = sum(result.legal_action_count for result in results)
+        attempts = sum(result.action_attempt_count for result in results)
+        latency = sum(result.latency for result in results)
+        aggregate = EvaluationAggregate(
+            fmean(result.reward for result in results),
+            legal,
+            attempts,
+            legal / attempts if attempts else None,
+            dict(Counter(result.termination_reason for result in results)),
+            sum(result.execution_failure for result in results),
+            latency,
+            latency / len(results),
+        )
+        return cls(policy_kind, protocol, results, aggregate, usage)
+
+    def to_dict(self) -> dict[str, object]:
+        """Serialize the complete report as JSON-compatible data."""
+        aggregate = asdict(self.aggregate)
+        aggregate["termination_counts"] = {
+            reason.value: count for reason, count in self.aggregate.termination_counts.items()
+        }
+        results = [
+            asdict(result) | {"termination_reason": result.termination_reason.value}
+            for result in self.results
+        ]
+        return {
+            "schema_version": 1,
+            "policy_kind": self.policy_kind,
+            "protocol": {"name": self.protocol.name, "env_id": self.protocol.env_id},
+            "aggregate": aggregate,
+            "results": results,
+            "usage": asdict(self.usage) if self.usage is not None else None,
+        }
+
+
+def evaluate_action_provider_on_env(
+    adapter: EnvironmentAdapter,
+    provider: ActionProvider,
+    seed: int,
+    optimal_steps: int = 0,
+    checks_legality: bool = False,
+) -> EvaluationResult:
+    """Evaluate one action provider on one seeded environment episode."""
+    start = time.monotonic()
+    rollout = RolloutEvaluator(adapter).evaluate_actions(provider, seed, checks_legality)
+    return EvaluationResult(
+        seed,
+        adapter.env_id,
+        rollout.terminal_reward >= 1.0,
+        rollout.terminal_reward,
+        rollout.legal_action_count,
+        rollout.action_attempt_count,
+        len(rollout.steps),
+        optimal_steps or adapter.max_steps,
+        rollout.termination_reason,
+        rollout.failure_summary,
+        time.monotonic() - start,
+        rollout.termination_reason
+        in (TerminationReason.EXECUTION_FAILURE, TerminationReason.CONTRACT_FAILURE),
+    )
 
 
 def evaluate_policy_on_env(
     adapter: EnvironmentAdapter,
     executor: ExecutorProtocol,
     source: str,
+    seed: int,
     optimal_steps: int = 0,
 ) -> EvaluationResult:
-    """Evaluate a generated policy on one environment without model calls.
-
-    ``steps_used`` is the number of environment transitions applied (length of
-    the rollout step list), not the number of executor attempts.
-    """
-    start = time.monotonic()
-    rollout = RolloutEvaluator(adapter=adapter, executor=executor).evaluate(source=source)
-    latency = time.monotonic() - start
-    execution_failure = rollout.termination_reason in (
-        TerminationReason.EXECUTION_FAILURE,
-        TerminationReason.CONTRACT_FAILURE,
-    )
-    return EvaluationResult(
-        env_id=adapter.env_id,
-        solved=rollout.terminal_reward >= 1.0,
-        reward=rollout.terminal_reward,
-        legal_action_count=rollout.legal_action_count,
-        steps_used=len(rollout.steps),
-        optimal_steps=optimal_steps or adapter.max_steps,
-        termination_reason=rollout.termination_reason,
-        failure_summary=rollout.failure_summary,
-        latency=latency,
-        execution_failure=execution_failure,
+    """Evaluate generated policy code for one seeded episode."""
+    return evaluate_action_provider_on_env(
+        adapter,
+        lambda observation: executor.execute(source, observation),
+        seed,
+        optimal_steps,
+        True,
     )
 
 
 def evaluate_policy(
     source: str,
     spec: EnvironmentSpec,
+    protocol: EvaluationProtocol,
     executor: ExecutorProtocol | None = None,
-) -> list[EvaluationResult]:
-    """Evaluate a generated policy across the selected registry suite.
-
-    Zero model calls — uses PolicyExecutor directly.
-    """
+) -> EvaluationReport:
+    """Evaluate generated policy code on 20 fresh exact-environment adapters."""
+    if spec.env_id != protocol.env_id:
+        raise ValueError("Evaluation protocol environment does not match specification")
     policy_executor = executor or PolicyExecutor()
-    return [
+    results = [
         evaluate_policy_on_env(
-            adapter=case.create_adapter(),
-            executor=policy_executor,
-            source=source,
-            optimal_steps=case.optimal_steps,
+            spec.create_adapter(), policy_executor, source, seed, spec.optimal_steps
         )
-        for case in spec.evaluation_cases
+        for seed in protocol.episode_seeds
     ]
+    return EvaluationReport.create("generated-policy", protocol, results)
 
 
-def format_evaluation_summary(
-    results: list[EvaluationResult],
-    family: str = "tower-of-hanoi",
-) -> str:
-    """Format evaluation results as a human-readable string."""
-    lines: list[str] = []
-    lines.append("=" * 60)
-    lines.append("Policy Evaluation Summary")
-    lines.append("=" * 60)
-    max_disk_solved = 0
-    for r in results:
-        status = "SOLVED" if r.solved else "FAILED"
-        lines.append(f"  {r.env_id}: {status}")
-        lines.append(f"    Reward: {r.reward}")
-        lines.append(f"    Steps: {r.steps_used}/{r.optimal_steps}")
-        lines.append(f"    Legal actions: {r.legal_action_count}")
-        if r.termination_reason is not None:
-            lines.append(f"    Termination: {r.termination_reason}")
-        if r.failure_summary:
-            lines.append(f"    Failure: {r.failure_summary}")
-        if r.execution_failure:
-            lines.append("    Execution failure: yes")
-        lines.append(f"    Latency: {r.latency:.3f}s")
-        lines.append("")
-        if "hardcore" in r.env_id and r.solved:
-            max_disk_solved = 6
-        elif "hard" in r.env_id and r.solved:
-            max_disk_solved = max(max_disk_solved, 5)
-        elif "medium" in r.env_id and r.solved:
-            max_disk_solved = max(max_disk_solved, 4)
-        elif r.solved:
-            max_disk_solved = max(max_disk_solved, 3)
-    if family == "tower-of-hanoi":
-        lines.append(f"  Largest disk count solved: {max_disk_solved}")
-    lines.append("=" * 60)
-    return "\n".join(lines)
+def format_evaluation_summary(report: EvaluationReport) -> str:
+    """Format canonical evaluation aggregates for terminal output."""
+    aggregate = report.aggregate
+    legality = (
+        "n/a" if aggregate.legal_action_rate is None else f"{aggregate.legal_action_rate:.3f}"
+    )
+    reasons = ", ".join(
+        f"{reason.value}={count}"
+        for reason, count in sorted(
+            aggregate.termination_counts.items(), key=lambda item: item[0].value
+        )
+    )
+    return (
+        "Policy Evaluation Summary\n"
+        f"  Environment: {report.protocol.env_id}\n"
+        f"  Episodes: {report.protocol.episode_count}\n"
+        f"  Mean reward: {aggregate.mean_reward:.3f}\n"
+        f"  Legal action rate: {legality} "
+        f"({aggregate.legal_action_count}/{aggregate.action_attempt_count})\n"
+        f"  Terminations: {reasons}\n  Execution failures: {aggregate.execution_failure_count}\n"
+        f"  Latency: total={aggregate.total_latency:.3f}s mean={aggregate.mean_latency:.3f}s"
+    )

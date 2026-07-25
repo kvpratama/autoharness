@@ -101,13 +101,18 @@ uv run autoharness synthesize \
 
 ## Evaluate A Generated Policy
 
-After synthesis, evaluate the generated `best.py` policy across Tower of Hanoi difficulty variants:
+After synthesis, evaluate the generated `best.py` policy exactly 20 times on the run's exact
+environment:
 
 ```bash
 uv run autoharness evaluate --run artifacts/<run-id>
 ```
 
-This writes evaluation output to `artifacts/<run-id>/evaluation/generated-policy.json`.
+The 20 deterministic seeds are disjoint from training seeds and persisted in
+`artifacts/<run-id>/evaluation/protocol.json`. Generated-policy and live-LLM baseline evaluations
+reuse this ordered protocol for paired comparison. Reports retain every episode and include arithmetic
+mean reward and action-weighted legality (`legal actions / proposed action attempts`); actionless
+failures are excluded from that denominator.
 
 Evaluation requires both policy functions. Legacy runs containing only `propose_action` must be
 synthesized again; evaluation reports a contract failure rather than assuming the action is legal.
@@ -168,6 +173,9 @@ artifacts/<run-id>/
 ├── config.json
 ├── events.jsonl
 ├── evaluation/
+│   ├── protocol.json
+│   ├── generated-policy.json
+│   └── llm-baseline.json  # optional
 ├── rollouts/
 ├── synthesis-summary.json
 └── tree.json

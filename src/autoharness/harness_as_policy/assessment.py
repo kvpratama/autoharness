@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import random
 from collections import Counter
+from collections.abc import Collection
 from statistics import fmean
 from typing import Protocol
 
@@ -32,13 +33,13 @@ _ACTIONABILITY = {
 }
 
 
-def generate_episode_seeds(base_seed: int, count: int) -> list[int]:
+def generate_episode_seeds(base_seed: int, count: int, excluded: Collection[int] = ()) -> list[int]:
     """Generate a reproducible ordered list of unique 32-bit episode seeds."""
     if count <= 0:
-        raise ValueError("Training rollout count must be positive")
+        raise ValueError("Episode seed count must be positive")
     rng = random.Random(base_seed)
     seeds: list[int] = []
-    seen: set[int] = set()
+    seen = set(excluded)
     while len(seeds) < count:
         seed = rng.getrandbits(32)
         if seed not in seen:

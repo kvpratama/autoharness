@@ -152,6 +152,16 @@ class ArtifactStore:
     def write_evaluation(self, name: str, data: dict[str, Any]) -> None:
         self._write_json(self._run_dir / "evaluation" / f"{name}.json", data)
 
+    def load_evaluation(self, name: str) -> dict[str, Any] | None:
+        """Load one named evaluation artifact when it exists."""
+        path = self._run_dir / "evaluation" / f"{name}.json"
+        if not path.exists():
+            return None
+        data = json.loads(path.read_text())
+        if not isinstance(data, dict):
+            raise ValueError(f"Evaluation artifact {name!r} must contain a JSON object")
+        return data
+
     def load_best_policy(self) -> str | None:
         path = self._run_dir / "best.py"
         if path.exists():

@@ -291,6 +291,7 @@ def test_actionless_execution_failure_does_not_count_as_attempt() -> None:
     result = RolloutEvaluator(FakeAdapter(), FakeExecutor(step_results=[None])).evaluate("source")
 
     assert result.action_attempt_count == 0
+    assert result.last_observation == "initial observation"
 
 
 def test_unchecked_provider_reports_environment_illegal_action() -> None:
@@ -343,6 +344,7 @@ def test_action_provider_exception_becomes_execution_failure() -> None:
     assert result.termination_reason == TerminationReason.EXECUTION_FAILURE
     assert result.failure_summary == "Action provider failed: provider boom"
     assert result.action_attempt_count == 0
+    assert result.last_observation == "initial observation"
 
 
 def test_environment_step_exception_becomes_execution_failure() -> None:
@@ -357,3 +359,4 @@ def test_environment_step_exception_becomes_execution_failure() -> None:
     assert result.termination_reason == TerminationReason.EXECUTION_FAILURE
     assert result.failure_summary == "Environment step failed: step boom"
     assert result.action_attempt_count == 1
+    assert result.last_observation == "initial observation"

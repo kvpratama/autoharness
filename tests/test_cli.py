@@ -412,7 +412,7 @@ def test_baseline_uses_all_protocol_seeds_and_persists_report(tmp_path: Path) ->
     assert len(report.results) == 20
     assert [adapter.reset_seed for adapter in adapters] == list(report.protocol.episode_seeds)
     assert [result.seed for result in report.results] == list(report.protocol.episode_seeds)
-    assert live_policy_class.call_count == 20
+    assert live_policy_class.call_count == 1
     data = json.loads((run_dir / "evaluation" / "llm-baseline.json").read_text())
     assert len(data["results"]) == 20
     assert isinstance(data["usage"], dict)
@@ -446,23 +446,22 @@ def test_baseline_records_policy_construction_failure_and_continues(tmp_path: Pa
     run_dir = tmp_path / "run"
     _write_evaluation_run(run_dir, env_id="Fake-v0")
     adapters: list[FakeBaselineAdapter] = []
-    live_policy = Mock()
-    live_policy.act.return_value = LiveActionResult("[A C]", True, 0.01)
 
     with (
         patch("autoharness.cli.get_environment_spec", return_value=_baseline_spec(adapters)),
         patch(
             "autoharness.cli.LivePolicy",
-            side_effect=[RuntimeError("policy boom"), *[live_policy for _ in range(19)]],
+            side_effect=RuntimeError("policy boom"),
         ),
     ):
         report = evaluate_baseline_cmd(run_dir, "fake:model")
 
     assert report is not None
     assert len(report.results) == 20
-    assert report.results[0].termination_reason == TerminationReason.EXECUTION_FAILURE
-    assert report.results[0].failure_summary == "Policy construction failed: policy boom"
-    assert report.results[1].reward == 1.0
+    assert all(r.termination_reason == TerminationReason.EXECUTION_FAILURE for r in report.results)
+    assert all(
+        r.failure_summary == "Policy construction failed: policy boom" for r in report.results
+    )
 
 
 def test_generated_and_baseline_reports_reuse_identical_persisted_seeds(tmp_path: Path) -> None:

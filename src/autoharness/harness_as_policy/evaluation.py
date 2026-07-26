@@ -59,19 +59,19 @@ class EvaluationProtocol:
     @classmethod
     def from_dict(cls, data: Mapping[str, object], expected_env_id: str) -> EvaluationProtocol:
         """Validate and deserialize a persisted protocol."""
-        if data.get("schema_version") != 1:
+        if data.get("schema_version") != PROTOCOL_SCHEMA_VERSION:
             raise ValueError("Evaluation protocol schema must be 1")
         if data.get("name") != PROTOCOL_NAME:
             raise ValueError("Evaluation protocol name must be paper-1p")
         if data.get("env_id") != expected_env_id:
             raise ValueError("Evaluation protocol environment does not match run")
-        if data.get("episode_count") != 20:
+        if data.get("episode_count") != PAPER_1P_EPISODE_COUNT:
             raise ValueError("Evaluation protocol episode_count must be 20")
         seeds = _integer_list(data.get("episode_seeds"), "episode_seeds")
         training = _integer_list(data.get("training_episode_seeds"), "training_episode_seeds")
-        if len(seeds) != 20:
+        if len(seeds) != PAPER_1P_EPISODE_COUNT:
             raise ValueError("Evaluation protocol requires 20 episode seeds")
-        if len(set(seeds)) != 20:
+        if len(set(seeds)) != PAPER_1P_EPISODE_COUNT:
             raise ValueError("Evaluation protocol episode seeds must be unique")
         if set(seeds) & set(training):
             raise ValueError("Evaluation and training seeds must be disjoint")

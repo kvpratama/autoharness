@@ -6,6 +6,7 @@ from dataclasses import dataclass
 
 import pytest
 
+from autoharness.harness_as_policy import evaluation
 from autoharness.harness_as_policy.assessment import generate_episode_seeds
 from autoharness.harness_as_policy.environments.registry import EnvironmentSpec
 from autoharness.harness_as_policy.evaluation import (
@@ -66,6 +67,25 @@ def test_protocol_rejects_overlap() -> None:
 
     with pytest.raises(ValueError, match="disjoint"):
         EvaluationProtocol.from_dict(data, "Exact-v0")
+
+
+def test_protocol_validation_uses_declared_constants(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(evaluation, "PROTOCOL_SCHEMA_VERSION", 7)
+    monkeypatch.setattr(evaluation, "PAPER_1P_EPISODE_COUNT", 3)
+    data = {
+        "schema_version": 7,
+        "name": "paper-1p",
+        "env_id": "Exact-v0",
+        "episode_count": 3,
+        "episode_seeds": [1, 2, 3],
+        "training_episode_seeds": [],
+        "metrics": {
+            "reward": evaluation.REWARD_METRIC,
+            "legal_action_rate": evaluation.LEGALITY_METRIC,
+        },
+    }
+
+    assert EvaluationProtocol.from_dict(data, "Exact-v0").episode_seeds == (1, 2, 3)
 
 
 @pytest.mark.parametrize(

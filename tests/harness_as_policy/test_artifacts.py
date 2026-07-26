@@ -248,6 +248,14 @@ def test_load_evaluation_round_trips_named_artifact(store: ArtifactStore) -> Non
     assert store.load_evaluation("missing") is None
 
 
+def test_load_evaluation_rejects_non_object_json(store: ArtifactStore) -> None:
+    path = store.run_dir / "evaluation" / "invalid.json"
+    path.write_text(json.dumps(["not", "an", "object"]))
+
+    with pytest.raises(ValueError, match="must contain a JSON object"):
+        store.load_evaluation("invalid")
+
+
 def test_load_best_policy(store: ArtifactStore) -> None:
     """load_best_policy reads back the best.py source."""
     source = (

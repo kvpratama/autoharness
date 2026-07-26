@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
@@ -149,10 +150,10 @@ class ArtifactStore:
     def write_synthesis_summary(self, summary: dict[str, Any]) -> None:
         self._write_json(self._run_dir / "synthesis-summary.json", summary)
 
-    def write_evaluation(self, name: str, data: dict[str, Any]) -> None:
+    def write_evaluation(self, name: str, data: Mapping[str, object]) -> None:
         self._write_json(self._run_dir / "evaluation" / f"{name}.json", data)
 
-    def load_evaluation(self, name: str) -> dict[str, Any] | None:
+    def load_evaluation(self, name: str) -> dict[str, object] | None:
         """Load one named evaluation artifact when it exists."""
         path = self._run_dir / "evaluation" / f"{name}.json"
         if not path.exists():

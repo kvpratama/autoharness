@@ -310,6 +310,30 @@ def evaluate_baseline_cmd(
         print(f"Error: invalid evaluation protocol or run configuration: {exc}", file=sys.stderr)
         return None
 
+    try:
+        live_policy = LivePolicy(
+            model_id=model_id,
+            input_price_per_million=input_price,
+            output_price_per_million=output_price,
+        )
+    except Exception as error:
+        for seed in protocol.episode_seeds:
+            start = time.monotonic()
+            results.append(
+                EvaluationResult.from_execution_failure(
+                    seed,
+                    spec.env_id,
+                    spec.optimal_steps,
+                    f"Policy construction failed: {error}",
+                    time.monotonic() - start,
+                )
+            )
+        usage = EvaluationUsage(0, 0, 0, None)
+        report = EvaluationReport.create("llm-baseline", protocol, results, usage)
+        print(format_evaluation_summary(report))
+        store.write_evaluation("llm-baseline", report.to_dict())
+        return report
+
     for seed in protocol.episode_seeds:
         start = time.monotonic()
         try:
@@ -325,35 +349,17 @@ def evaluate_baseline_cmd(
                 )
             )
             continue
-        try:
-            live_policy = LivePolicy(
-                model_id=model_id,
-                input_price_per_million=input_price,
-                output_price_per_million=output_price,
-            )
-        except Exception as error:
-            results.append(
-                EvaluationResult.from_execution_failure(
-                    seed,
-                    spec.env_id,
-                    spec.optimal_steps or adapter.max_steps,
-                    f"Policy construction failed: {error}",
-                    time.monotonic() - start,
-                )
-            )
-            continue
 
         def provide_action(
             observation: str,
-            live_policy: LivePolicy = live_policy,
-            adapter: EnvironmentAdapter = adapter,
+            _adapter: EnvironmentAdapter = adapter,
         ) -> ExecutionResult:
             nonlocal total_model_calls, total_input_tokens, total_output_tokens
             nonlocal total_estimated_cost
             action_result = live_policy.act(
-                env_name=adapter.env_id,
-                rules=adapter.rules,
-                action_format=adapter.action_format,
+                env_name=_adapter.env_id,
+                rules=_adapter.rules,
+                action_format=_adapter.action_format,
                 observation=observation,
             )
             total_model_calls += action_result.model_calls

@@ -74,6 +74,7 @@ class RolloutEvaluator:
                     attempts,
                     TerminationReason.EXECUTION_FAILURE,
                     f"Action provider failed: {error}",
+                    observation,
                 )
             if not outcome.success or outcome.output is None:
                 reason = (
@@ -81,7 +82,7 @@ class RolloutEvaluator:
                     if outcome.failure_type == "contract_failure"
                     else TerminationReason.EXECUTION_FAILURE
                 )
-                return self._result(steps, attempts, reason, outcome.error_details)
+                return self._result(steps, attempts, reason, outcome.error_details, observation)
             action = outcome.output
             attempts += 1
             if checks_legality and outcome.is_legal_action is not True:
@@ -101,6 +102,7 @@ class RolloutEvaluator:
                     attempts,
                     TerminationReason.EXECUTION_FAILURE,
                     f"Environment step failed: {error}",
+                    observation,
                 )
             steps.append(step)
             if not step.is_legal:

@@ -172,13 +172,18 @@ artifacts/<run-id>/
 ├── candidates/
 ├── config.json
 ├── events.jsonl
-├── evaluation/
-│   ├── protocol.json
-│   ├── generated-policy.json
-│   └── llm-baseline.json  # optional
 ├── rollouts/
 ├── synthesis-summary.json
 └── tree.json
+```
+
+Running evaluation commands (`autoharness evaluate` or `autoharness evaluate-baseline`) creates evaluation artifacts under `artifacts/<run-id>/evaluation/`:
+
+```text
+artifacts/<run-id>/evaluation/
+├── protocol.json
+├── generated-policy.json
+└── llm-baseline.json  # optional
 ```
 
 `best.py` is the best generated policy for the run. Rollout files use schema version 2 and contain

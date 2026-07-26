@@ -82,8 +82,8 @@ Useful options:
 - `--training-rollouts N`: episodes per candidate (defaults to one for Hanoi and five for Blackjack)
 
 Every candidate in a run uses the same resolved ordered training-seed list. `--seed` controls only
-Thompson sampling. Blackjack final evaluation is currently one provisional episode; it does not
-implement a repeated 20-match held-out protocol.
+Thompson sampling. Blackjack final evaluation uses the same persisted 20-episode held-out protocol
+as generated-policy evaluation, running the policy on the run's exact environment.
 
 ## Paper Reproduction (Harness-as-Policy)
 
@@ -101,13 +101,18 @@ uv run autoharness synthesize \
 
 ## Evaluate A Generated Policy
 
-After synthesis, evaluate the generated `best.py` policy across Tower of Hanoi difficulty variants:
+After synthesis, evaluate the generated `best.py` policy exactly 20 times on the run's exact
+environment:
 
 ```bash
 uv run autoharness evaluate --run artifacts/<run-id>
 ```
 
-This writes evaluation output to `artifacts/<run-id>/evaluation/generated-policy.json`.
+The 20 deterministic seeds are disjoint from training seeds and persisted in
+`artifacts/<run-id>/evaluation/protocol.json`. Generated-policy and live-LLM baseline
+evaluations reuse this ordered protocol for paired comparison. Reports retain every episode and
+include arithmetic mean reward and action-weighted legality (`legal actions / proposed action
+attempts`); actionless failures are excluded from that denominator.
 
 Evaluation requires both policy functions. Legacy runs containing only `propose_action` must be
 synthesized again; evaluation reports a contract failure rather than assuming the action is legal.
@@ -167,10 +172,18 @@ artifacts/<run-id>/
 ├── candidates/
 ├── config.json
 ├── events.jsonl
-├── evaluation/
 ├── rollouts/
 ├── synthesis-summary.json
 └── tree.json
+```
+
+Running evaluation commands (`autoharness evaluate` or `autoharness evaluate-baseline`) creates evaluation artifacts under `artifacts/<run-id>/evaluation/`:
+
+```text
+artifacts/<run-id>/evaluation/
+├── protocol.json
+├── generated-policy.json
+└── llm-baseline.json  # optional
 ```
 
 `best.py` is the best generated policy for the run. Rollout files use schema version 2 and contain

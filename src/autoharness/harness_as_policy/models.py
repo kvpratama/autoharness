@@ -54,6 +54,7 @@ class RolloutResult:
     termination_reason: TerminationReason
     failure_summary: str | None
     last_observation: str | None = None
+    action_attempt_count: int = 0
 
 
 @dataclass

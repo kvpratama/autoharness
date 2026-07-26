@@ -276,3 +276,87 @@ def test_checker_environment_legality_disagreement_returns_zero() -> None:
     assert result.termination_reason.value == "legality_disagreement"
     assert "checker=True" in (result.failure_summary or "")
     assert "environment=False" in (result.failure_summary or "")
+
+
+def test_checker_rejection_counts_one_proposed_action_attempt() -> None:
+    result = RolloutEvaluator(
+        FakeAdapter(), FakeExecutor(step_results=[("[A C]", False)])
+    ).evaluate("source")
+
+    assert result.action_attempt_count == 1
+    assert result.legal_action_count == 0
+
+
+def test_actionless_execution_failure_does_not_count_as_attempt() -> None:
+    result = RolloutEvaluator(FakeAdapter(), FakeExecutor(step_results=[None])).evaluate("source")
+
+    assert result.action_attempt_count == 0
+    assert result.last_observation == "initial observation"
+
+
+def test_unchecked_provider_reports_environment_illegal_action() -> None:
+    adapter = FakeAdapter([StepResult("next", "bad", False, 0.0, True, "Illegal move")])
+
+    result = RolloutEvaluator(adapter).evaluate_actions(
+        lambda _observation: ExecutionResult(True, "bad", 0.01),
+        seed=123,
+        checks_legality=False,
+    )
+
+    assert result.termination_reason == TerminationReason.ILLEGAL_ACTION
+    assert result.action_attempt_count == 1
+    assert result.failure_summary == "Illegal move"
+
+
+class FailingSetupAdapter(FakeAdapter):
+    def __init__(self, *, reset_fails: bool) -> None:
+        super().__init__()
+        self._reset_fails = reset_fails
+
+    def create(self) -> None:
+        if not self._reset_fails:
+            raise RuntimeError("create boom")
+
+    def reset(self, seed: int | None = None) -> str:
+        if self._reset_fails:
+            raise RuntimeError("reset boom")
+        return super().reset(seed)
+
+
+def test_environment_creation_and_reset_failures_remain_distinct() -> None:
+    creation = RolloutEvaluator(FailingSetupAdapter(reset_fails=False)).evaluate_actions(
+        lambda _observation: ExecutionResult(True, "action", 0.0)
+    )
+    reset = RolloutEvaluator(FailingSetupAdapter(reset_fails=True)).evaluate_actions(
+        lambda _observation: ExecutionResult(True, "action", 0.0)
+    )
+
+    assert creation.failure_summary == "Environment creation failed: create boom"
+    assert reset.failure_summary == "Environment reset failed: reset boom"
+
+
+def test_action_provider_exception_becomes_execution_failure() -> None:
+    def raise_provider_error(_observation: str) -> ExecutionResult:
+        raise RuntimeError("provider boom")
+
+    result = RolloutEvaluator(FakeAdapter()).evaluate_actions(raise_provider_error)
+
+    assert result.termination_reason == TerminationReason.EXECUTION_FAILURE
+    assert result.failure_summary == "Action provider failed: provider boom"
+    assert result.action_attempt_count == 0
+    assert result.last_observation == "initial observation"
+
+
+def test_environment_step_exception_becomes_execution_failure() -> None:
+    class FailingStepAdapter(FakeAdapter):
+        def step(self, action: str) -> StepResult:
+            raise RuntimeError("step boom")
+
+    result = RolloutEvaluator(FailingStepAdapter()).evaluate_actions(
+        lambda _observation: ExecutionResult(True, "action", 0.0)
+    )
+
+    assert result.termination_reason == TerminationReason.EXECUTION_FAILURE
+    assert result.failure_summary == "Environment step failed: step boom"
+    assert result.action_attempt_count == 1
+    assert result.last_observation == "initial observation"

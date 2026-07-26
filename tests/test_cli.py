@@ -12,8 +12,12 @@ from unittest.mock import Mock, patch
 import pytest
 
 from autoharness.cli import evaluate_baseline_cmd, evaluate_cmd, main, synthesize_cmd
-from autoharness.harness_as_policy.environments.registry import EnvironmentSpec, EvaluationCase
-from autoharness.harness_as_policy.evaluation import EvaluationResult
+from autoharness.harness_as_policy.environments.registry import EnvironmentSpec
+from autoharness.harness_as_policy.evaluation import (
+    EvaluationProtocol,
+    EvaluationReport,
+    EvaluationResult,
+)
 from autoharness.harness_as_policy.live_policy import LiveActionResult
 from autoharness.harness_as_policy.models import StepResult, TerminationReason
 
@@ -29,6 +33,7 @@ class FakeBaselineAdapter:
     action_format: str = "[A B]"
     max_steps: int = 1
     _observation: str = "initial observation"
+    reset_seed: int | None = None
 
     def create(self) -> None:
         """Initialize the fake environment."""
@@ -37,6 +42,7 @@ class FakeBaselineAdapter:
 
     def reset(self, seed: int | None = None) -> str:
         """Return the initial fake observation."""
+        self.reset_seed = seed
         return self._observation
 
     def step(self, action: str) -> StepResult:
@@ -261,149 +267,232 @@ def test_synthesize_cmd_reports_invalid_training_rollouts_as_cli_error(
     assert "Traceback" not in error
 
 
-def test_evaluate_cmd_requires_run() -> None:
-    """evaluate command requires --run flag."""
-    with tempfile.TemporaryDirectory() as tmpdir:
-        # Create the best.py file that evaluate_cmd looks for
-        (Path(tmpdir) / "best.py").write_text(
-            "def propose_action(board: str) -> str: return '[A C]'\n"
-            "def is_legal_action(board: str, action: str) -> bool: return True"
+def _write_evaluation_run(
+    run_dir: Path,
+    *,
+    env_id: str = "TowerOfHanoi-v0",
+    include_training_seeds: bool = True,
+) -> dict[str, object]:
+    run_dir.mkdir()
+    (run_dir / "best.py").write_text("def propose_action(observation: str) -> str: return '[A C]'")
+    config: dict[str, object] = {"env_id": env_id, "environment_seed": 17}
+    if include_training_seeds:
+        config["training_episode_seeds"] = [11, 22]
+    (run_dir / "config.json").write_text(json.dumps(config))
+    return config
+
+
+def _evaluation_report(protocol: EvaluationProtocol, policy_kind: str) -> EvaluationReport:
+    results = [
+        EvaluationResult(
+            seed=seed,
+            env_id=protocol.env_id,
+            solved=True,
+            reward=1.0,
+            legal_action_count=1,
+            action_attempt_count=1,
+            steps_used=1,
+            optimal_steps=1,
+            termination_reason=TerminationReason.ENVIRONMENT_TERMINATION,
+            failure_summary=None,
+            latency=0.01,
+            execution_failure=False,
         )
-        (Path(tmpdir) / "config.json").write_text('{"env_id": "TowerOfHanoi-v0"}')
-        with patch("autoharness.cli.evaluate_policy") as mock_eval:
-            mock_eval.return_value = []
-            with patch("autoharness.cli.format_evaluation_summary") as mock_fmt:
-                mock_fmt.return_value = "summary"
-                result = evaluate_cmd(run_dir=Path(tmpdir))
-    assert result is not None
+        for seed in protocol.episode_seeds
+    ]
+    return EvaluationReport.create(policy_kind, protocol, results)
 
 
-def test_evaluate_cmd_persists_structured_termination_data() -> None:
-    """Generated-policy artifacts retain the structured evaluation outcome."""
-    result = EvaluationResult(
-        env_id="TowerOfHanoi-v0",
-        solved=False,
-        reward=0.0,
-        legal_action_count=1,
-        steps_used=2,
-        optimal_steps=7,
-        termination_reason=TerminationReason.ILLEGAL_ACTION,
-        failure_summary="Move is not legal",
-        latency=0.01,
-        execution_failure=False,
-    )
-    with tempfile.TemporaryDirectory() as tmpdir:
-        run_dir = Path(tmpdir) / "run"
-        run_dir.mkdir()
-        (run_dir / "best.py").write_text(
-            "def propose_action(board: str) -> str: return '[A C]'\n"
-            "def is_legal_action(board: str, action: str) -> bool: return True"
-        )
-        (run_dir / "config.json").write_text('{"env_id": "TowerOfHanoi-v0"}')
-        with patch("autoharness.cli.evaluate_policy", return_value=[result]):
-            evaluate_cmd(run_dir=run_dir)
+def test_evaluate_cmd_creates_protocol_and_structured_report(tmp_path: Path) -> None:
+    run_dir = tmp_path / "run"
+    config = _write_evaluation_run(run_dir)
 
-        data = json.loads((run_dir / "evaluation" / "generated-policy.json").read_text())
+    def evaluate(
+        _source: str, _spec: EnvironmentSpec, protocol: EvaluationProtocol
+    ) -> EvaluationReport:
+        return _evaluation_report(protocol, "generated-policy")
 
-    persisted = data["results"][0]
-    assert persisted["termination_reason"] == "illegal_action"
-    assert persisted["failure_summary"] == "Move is not legal"
-    assert "illegal_action_reason" not in persisted
+    with patch("autoharness.cli.evaluate_policy", side_effect=evaluate):
+        report = evaluate_cmd(run_dir)
+
+    assert report is not None
+    protocol_data = json.loads((run_dir / "evaluation" / "protocol.json").read_text())
+    report_data = json.loads((run_dir / "evaluation" / "generated-policy.json").read_text())
+    assert protocol_data["episode_count"] == 20
+    training_seeds = config["training_episode_seeds"]
+    assert isinstance(training_seeds, list)
+    assert set(protocol_data["episode_seeds"]).isdisjoint(training_seeds)
+    assert len(report_data["results"]) == 20
+    assert "mean_reward" in report_data["aggregate"]
 
 
-@pytest.mark.parametrize(
-    (
-        "adapter",
-        "action_result",
-        "expected_reason",
-        "expected_failure",
-        "expected_execution_failure",
-    ),
-    [
-        (
-            FakeBaselineAdapter(setup_error=RuntimeError("setup failed")),
-            None,
-            TerminationReason.EXECUTION_FAILURE,
-            "Environment setup failed: setup failed",
-            True,
-        ),
-        (
-            FakeBaselineAdapter(),
-            LiveActionResult(
-                action=None, success=False, latency=0.01, error_details="model unavailable"
-            ),
-            TerminationReason.EXECUTION_FAILURE,
-            "model unavailable",
-            True,
-        ),
-        (
-            FakeBaselineAdapter(
-                step_result=StepResult("next", "[B A]", False, 0.0, False, "Illegal move")
-            ),
-            LiveActionResult(action="[B A]", success=True, latency=0.01),
-            TerminationReason.ILLEGAL_ACTION,
-            "Illegal move",
-            False,
-        ),
-        (
-            FakeBaselineAdapter(step_result=StepResult("next", "[A C]", True, 1.0, True, "")),
-            LiveActionResult(action="[A C]", success=True, latency=0.01),
-            TerminationReason.ENVIRONMENT_TERMINATION,
-            None,
-            False,
-        ),
-        (
-            FakeBaselineAdapter(step_result=StepResult("next", "[A C]", True, 0.0, False, "")),
-            LiveActionResult(action="[A C]", success=True, latency=0.01),
-            TerminationReason.STEP_LIMIT,
-            None,
-            False,
-        ),
-    ],
-)
-def test_evaluate_baseline_cmd_maps_each_exit_to_structured_termination_data(
-    adapter: FakeBaselineAdapter,
-    action_result: LiveActionResult | None,
-    expected_reason: TerminationReason,
-    expected_failure: str | None,
-    expected_execution_failure: bool,
+def test_evaluate_cmd_reuses_persisted_protocol(tmp_path: Path) -> None:
+    run_dir = tmp_path / "run"
+    _write_evaluation_run(run_dir)
+    known_protocol = EvaluationProtocol.create("TowerOfHanoi-v0", 99, [11, 22])
+    (run_dir / "evaluation").mkdir()
+    (run_dir / "evaluation" / "protocol.json").write_text(json.dumps(known_protocol.to_dict()))
+
+    with patch(
+        "autoharness.cli.evaluate_policy",
+        return_value=_evaluation_report(known_protocol, "generated-policy"),
+    ) as mock_evaluate:
+        assert evaluate_cmd(run_dir) is not None
+
+    assert mock_evaluate.call_args.args[2] == known_protocol
+
+
+def test_evaluate_cmd_rejects_protocol_with_stale_training_seeds(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """Baseline artifacts use the same outcome schema as generated policies."""
+    run_dir = tmp_path / "run"
+    _write_evaluation_run(run_dir)
+    protocol = EvaluationProtocol.create("TowerOfHanoi-v0", 99, [1, 2])
+    (run_dir / "evaluation").mkdir()
+    path = run_dir / "evaluation" / "protocol.json"
+    path.write_text(json.dumps(protocol.to_dict()))
+
+    assert evaluate_cmd(run_dir) is None
+    assert "training seeds do not match" in capsys.readouterr().err
+    assert json.loads(path.read_text()) == protocol.to_dict()
+
+
+def test_evaluate_cmd_rejects_malformed_protocol_without_overwriting(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    run_dir = tmp_path / "run"
+    _write_evaluation_run(run_dir)
+    protocol = EvaluationProtocol.create("TowerOfHanoi-v0", 99, [1, 2]).to_dict()
+    protocol["episode_seeds"] = list(range(19))
+    protocol["episode_count"] = 19
+    (run_dir / "evaluation").mkdir()
+    path = run_dir / "evaluation" / "protocol.json"
+    path.write_text(json.dumps(protocol))
+
+    assert evaluate_cmd(run_dir) is None
+    assert "evaluation protocol" in capsys.readouterr().err.lower()
+    assert json.loads(path.read_text()) == protocol
+
+
+def test_evaluate_cmd_rejects_legacy_config_without_training_seeds(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    run_dir = tmp_path / "run"
+    _write_evaluation_run(run_dir, include_training_seeds=False)
+
+    assert evaluate_cmd(run_dir) is None
+    assert "training_episode_seeds" in capsys.readouterr().err
+
+
+def _baseline_spec(adapters: list[FakeBaselineAdapter]) -> EnvironmentSpec:
+    def create_adapter() -> FakeBaselineAdapter:
+        adapter = FakeBaselineAdapter(step_result=StepResult("done", "[A C]", True, 1.0, True, ""))
+        adapters.append(adapter)
+        return adapter
+
+    return EnvironmentSpec("Fake-v0", "fake", create_adapter, 1, optimal_steps=1)
+
+
+def test_baseline_uses_all_protocol_seeds_and_persists_report(tmp_path: Path) -> None:
+    run_dir = tmp_path / "run"
+    _write_evaluation_run(run_dir, env_id="Fake-v0")
+    adapters: list[FakeBaselineAdapter] = []
     live_policy = Mock()
-    if action_result is not None:
-        live_policy.act.return_value = action_result
-    with tempfile.TemporaryDirectory() as tmpdir:
-        run_dir = Path(tmpdir) / "run"
-        run_dir.mkdir()
-        (run_dir / "config.json").write_text('{"env_id": "Fake-v0"}')
-        spec = EnvironmentSpec(
-            env_id="Fake-v0",
-            family="fake",
-            create_adapter=lambda: adapter,
-            default_training_rollouts=1,
-            evaluation_cases=(EvaluationCase(create_adapter=lambda: adapter),),
-        )
-        with (
-            patch("autoharness.cli.get_environment_spec", return_value=spec),
-            patch("autoharness.cli.LivePolicy", return_value=live_policy),
-            patch(
-                "autoharness.harness_as_policy.environments.tower_of_hanoi.DIFFICULTY_MAP",
-                {"v0": ("Fake-v0", 1, 1)},
-            ),
-        ):
-            results = evaluate_baseline_cmd(run_dir=run_dir, model_id="fake:model")
+    live_policy.act.return_value = LiveActionResult(
+        action="[A C]", success=True, latency=0.01, model_calls=1
+    )
 
-        data = json.loads((run_dir / "evaluation" / "llm-baseline.json").read_text())
+    with (
+        patch("autoharness.cli.get_environment_spec", return_value=_baseline_spec(adapters)),
+        patch("autoharness.cli.LivePolicy", return_value=live_policy) as live_policy_class,
+    ):
+        report = evaluate_baseline_cmd(run_dir, "fake:model")
 
-    assert results is not None
-    result = results[0]
-    persisted = data["results"][0]
-    assert result.termination_reason == expected_reason
-    assert result.failure_summary == expected_failure
-    assert result.execution_failure is expected_execution_failure
-    assert persisted["termination_reason"] == expected_reason.value
-    assert persisted["failure_summary"] == expected_failure
-    assert "illegal_action_reason" not in persisted
+    assert report is not None
+    assert len(report.results) == 20
+    assert [adapter.reset_seed for adapter in adapters] == list(report.protocol.episode_seeds)
+    assert [result.seed for result in report.results] == list(report.protocol.episode_seeds)
+    assert live_policy_class.call_count == 1
+    data = json.loads((run_dir / "evaluation" / "llm-baseline.json").read_text())
+    assert len(data["results"]) == 20
+    assert isinstance(data["usage"], dict)
+    assert isinstance(data["aggregate"], dict)
+
+
+def test_baseline_actionless_failure_is_excluded_from_legality(tmp_path: Path) -> None:
+    run_dir = tmp_path / "run"
+    _write_evaluation_run(run_dir, env_id="Fake-v0")
+    adapters: list[FakeBaselineAdapter] = []
+    live_policy = Mock()
+    live_policy.act.side_effect = [
+        LiveActionResult(None, False, 0.01, error_details="model unavailable"),
+        *[LiveActionResult("[A C]", True, 0.01) for _ in range(19)],
+    ]
+
+    with (
+        patch("autoharness.cli.get_environment_spec", return_value=_baseline_spec(adapters)),
+        patch("autoharness.cli.LivePolicy", return_value=live_policy),
+    ):
+        report = evaluate_baseline_cmd(run_dir, "fake:model")
+
+    assert report is not None
+    assert report.aggregate.execution_failure_count == 1
+    assert report.aggregate.action_attempt_count == 19
+    assert report.aggregate.legal_action_count == 19
+    assert report.aggregate.legal_action_rate == 1.0
+
+
+def test_baseline_records_policy_construction_failure_and_continues(tmp_path: Path) -> None:
+    run_dir = tmp_path / "run"
+    _write_evaluation_run(run_dir, env_id="Fake-v0")
+    adapters: list[FakeBaselineAdapter] = []
+
+    with (
+        patch("autoharness.cli.get_environment_spec", return_value=_baseline_spec(adapters)),
+        patch(
+            "autoharness.cli.LivePolicy",
+            side_effect=RuntimeError("policy boom"),
+        ),
+    ):
+        report = evaluate_baseline_cmd(run_dir, "fake:model")
+
+    assert report is not None
+    assert len(report.results) == 20
+    assert all(r.termination_reason == TerminationReason.EXECUTION_FAILURE for r in report.results)
+    assert all(
+        r.failure_summary == "Policy construction failed: policy boom" for r in report.results
+    )
+
+
+def test_generated_and_baseline_reports_reuse_identical_persisted_seeds(tmp_path: Path) -> None:
+    run_dir = tmp_path / "run"
+    _write_evaluation_run(run_dir, env_id="Fake-v0")
+    adapters: list[FakeBaselineAdapter] = []
+    spec = _baseline_spec(adapters)
+
+    def evaluate(
+        _source: str, _spec: EnvironmentSpec, protocol: EvaluationProtocol
+    ) -> EvaluationReport:
+        return _evaluation_report(protocol, "generated-policy")
+
+    live_policy = Mock()
+    live_policy.act.return_value = LiveActionResult("[A C]", True, 0.01)
+    with (
+        patch("autoharness.cli.get_environment_spec", return_value=spec),
+        patch("autoharness.cli.evaluate_policy", side_effect=evaluate),
+    ):
+        generated = evaluate_cmd(run_dir)
+    with (
+        patch("autoharness.cli.get_environment_spec", return_value=spec),
+        patch("autoharness.cli.LivePolicy", return_value=live_policy),
+    ):
+        baseline = evaluate_baseline_cmd(run_dir, "fake:model")
+
+    assert generated is not None
+    assert baseline is not None
+    assert [result.seed for result in generated.results] == [
+        result.seed for result in baseline.results
+    ]
 
 
 def test_main_synthesize_dispatches() -> None:

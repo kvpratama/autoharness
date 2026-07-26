@@ -77,6 +77,16 @@ def test_seed_generation_is_reproducible_and_counted() -> None:
     assert generate_episode_seeds(7, 5) != generate_episode_seeds(8, 5)
 
 
+def test_seed_generation_excludes_training_seeds_without_changing_order() -> None:
+    training = generate_episode_seeds(7, 3)
+    held_out = generate_episode_seeds(7, 20, excluded=training)
+
+    assert len(held_out) == 20
+    assert len(set(held_out)) == 20
+    assert set(training).isdisjoint(held_out)
+    assert held_out == generate_episode_seeds(7, 23)[3:]
+
+
 def test_feedback_uses_only_representative_episode() -> None:
     evaluator = ScriptedEvaluator(
         [

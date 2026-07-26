@@ -3,24 +3,34 @@
 from __future__ import annotations
 
 import argparse
-import json
 import logging
 import sys
+import time
 from pathlib import Path
 from typing import TypedDict, cast
 
 from dotenv import load_dotenv
 from pydantic import ValidationError
 
+from autoharness.harness_as_policy.artifacts import ArtifactStore
 from autoharness.harness_as_policy.config import Settings, _LogLevelOnlySettings
-from autoharness.harness_as_policy.environments.registry import get_environment_spec
+from autoharness.harness_as_policy.environments.base import EnvironmentAdapter
+from autoharness.harness_as_policy.environments.registry import (
+    EnvironmentSpec,
+    get_environment_spec,
+)
 from autoharness.harness_as_policy.evaluation import (
+    EvaluationProtocol,
+    EvaluationReport,
     EvaluationResult,
+    EvaluationUsage,
+    evaluate_action_provider_on_env,
     evaluate_policy,
     format_evaluation_summary,
 )
+from autoharness.harness_as_policy.executor import ExecutionResult
 from autoharness.harness_as_policy.live_policy import LivePolicy
-from autoharness.harness_as_policy.models import Profile, TerminationReason
+from autoharness.harness_as_policy.models import Profile
 from autoharness.harness_as_policy.refiner import Refiner
 from autoharness.harness_as_policy.search import synthesize
 
@@ -230,53 +240,50 @@ def synthesize_cmd(
     return cast(SynthesisResult, result)
 
 
-def evaluate_cmd(run_dir: Path) -> list[EvaluationResult] | None:
+def _load_or_create_evaluation_protocol(
+    store: ArtifactStore, config: dict[str, object], spec: EnvironmentSpec
+) -> EvaluationProtocol:
+    """Load the persisted protocol, or create it strictly from run configuration."""
+    training_seeds = config.get("training_episode_seeds")
+    if not isinstance(training_seeds, list) or any(
+        not isinstance(seed, int) or isinstance(seed, bool) for seed in training_seeds
+    ):
+        raise ValueError("Run config requires integer training_episode_seeds")
+    typed_training_seeds = cast(list[int], training_seeds)
+    existing = store.load_evaluation("protocol")
+    if existing is not None:
+        protocol = EvaluationProtocol.from_dict(existing, spec.env_id)
+        if list(protocol.training_episode_seeds) != typed_training_seeds:
+            raise ValueError("Evaluation protocol training seeds do not match run configuration")
+        return protocol
+    environment_seed = config.get("environment_seed")
+    if not isinstance(environment_seed, int) or isinstance(environment_seed, bool):
+        raise ValueError("Run config requires integer environment_seed for held-out evaluation")
+    protocol = EvaluationProtocol.create(spec.env_id, environment_seed, typed_training_seeds)
+    store.write_evaluation("protocol", protocol.to_dict())
+    return protocol
+
+
+def evaluate_cmd(run_dir: Path) -> EvaluationReport | None:
     """Run the evaluate command."""
     best_policy_path = run_dir / "best.py"
     if not best_policy_path.exists():
         print(f"Error: no best.py found in {run_dir}", file=sys.stderr)
         return None
-    config_path = run_dir / "config.json"
-    if not config_path.exists():
-        print(f"Error: no config.json found in {run_dir}", file=sys.stderr)
-        return None
+    store = ArtifactStore(run_dir.parent, run_dir.name)
     try:
-        config = json.loads(config_path.read_text())
+        config = store.load_config()
+        if config is None:
+            raise ValueError(f"no config.json found in {run_dir}")
         spec = get_environment_spec(config["env_id"])
-    except (OSError, json.JSONDecodeError, KeyError, TypeError, ValueError) as exc:
-        print(f"Error: invalid run environment configuration: {exc}", file=sys.stderr)
+        protocol = _load_or_create_evaluation_protocol(store, config, spec)
+        report = evaluate_policy(best_policy_path.read_text(), spec, protocol)
+        store.write_evaluation("generated-policy", report.to_dict())
+    except (OSError, KeyError, TypeError, ValueError) as exc:
+        print(f"Error: invalid evaluation protocol or run configuration: {exc}", file=sys.stderr)
         return None
-    source = best_policy_path.read_text()
-    results = evaluate_policy(source=source, spec=spec)
-    summary = format_evaluation_summary(results, spec.family)
-    print(summary)
-
-    from autoharness.harness_as_policy.artifacts import ArtifactStore
-
-    store = ArtifactStore(root=run_dir.parent, run_id=run_dir.name)
-    store.write_evaluation(
-        "generated-policy",
-        {
-            "results": [
-                {
-                    "env_id": r.env_id,
-                    "solved": r.solved,
-                    "reward": r.reward,
-                    "legal_action_count": r.legal_action_count,
-                    "steps_used": r.steps_used,
-                    "optimal_steps": r.optimal_steps,
-                    "termination_reason": (
-                        r.termination_reason.value if r.termination_reason is not None else None
-                    ),
-                    "failure_summary": r.failure_summary,
-                    "latency": r.latency,
-                    "execution_failure": r.execution_failure,
-                }
-                for r in results
-            ],
-        },
-    )
-    return results
+    print(format_evaluation_summary(report))
+    return report
 
 
 def evaluate_baseline_cmd(
@@ -284,67 +291,75 @@ def evaluate_baseline_cmd(
     model_id: str,
     input_price: float | None = None,
     output_price: float | None = None,
-) -> list[EvaluationResult] | None:
+) -> EvaluationReport | None:
     """Run the live-LLM baseline evaluate command."""
-    import time
-
-    results: list[EvaluationResult] = []
+    results = []
     total_model_calls = 0
     total_input_tokens = 0
     total_output_tokens = 0
     total_estimated_cost = 0.0
 
-    config_path = run_dir / "config.json"
-    if not config_path.exists():
-        print(f"Error: no config.json found in {run_dir}", file=sys.stderr)
-        return None
+    store = ArtifactStore(run_dir.parent, run_dir.name)
     try:
-        config = json.loads(config_path.read_text())
+        config = store.load_config()
+        if config is None:
+            raise ValueError(f"no config.json found in {run_dir}")
         spec = get_environment_spec(config["env_id"])
-    except (OSError, json.JSONDecodeError, KeyError, TypeError, ValueError) as exc:
-        print(f"Error: invalid run environment configuration: {exc}", file=sys.stderr)
+        protocol = _load_or_create_evaluation_protocol(store, config, spec)
+    except (OSError, KeyError, TypeError, ValueError) as exc:
+        print(f"Error: invalid evaluation protocol or run configuration: {exc}", file=sys.stderr)
         return None
 
-    for case in spec.evaluation_cases:
-        adapter = case.create_adapter()
-        env_id = adapter.env_id
-        optimal = case.optimal_steps or adapter.max_steps
+    try:
         live_policy = LivePolicy(
             model_id=model_id,
             input_price_per_million=input_price,
             output_price_per_million=output_price,
         )
-        try:
-            adapter.create()
-            observation = adapter.reset()
-        except Exception as e:
+    except Exception as error:
+        for seed in protocol.episode_seeds:
+            start = time.monotonic()
             results.append(
-                EvaluationResult(
-                    env_id=env_id,
-                    solved=False,
-                    reward=0.0,
-                    legal_action_count=0,
-                    steps_used=0,
-                    optimal_steps=optimal,
-                    termination_reason=TerminationReason.EXECUTION_FAILURE,
-                    failure_summary=f"Environment setup failed: {e}",
-                    latency=0.0,
-                    execution_failure=True,
+                EvaluationResult.from_execution_failure(
+                    seed,
+                    spec.env_id,
+                    spec.optimal_steps,
+                    f"Policy construction failed: {error}",
+                    time.monotonic() - start,
+                )
+            )
+        usage = EvaluationUsage(0, 0, 0, None)
+        report = EvaluationReport.create("llm-baseline", protocol, results, usage)
+        print(format_evaluation_summary(report))
+        store.write_evaluation("llm-baseline", report.to_dict())
+        return report
+
+    for seed in protocol.episode_seeds:
+        start = time.monotonic()
+        try:
+            adapter = spec.create_adapter()
+        except Exception as error:
+            results.append(
+                EvaluationResult.from_execution_failure(
+                    seed,
+                    spec.env_id,
+                    spec.optimal_steps,
+                    f"Adapter construction failed: {error}",
+                    time.monotonic() - start,
                 )
             )
             continue
-        start = time.monotonic()
-        legal_actions = 0
-        solved = False
-        reward = 0.0
-        steps_used = 0
 
-        for _ in range(adapter.max_steps):
-            steps_used += 1
+        def provide_action(
+            observation: str,
+            _adapter: EnvironmentAdapter = adapter,
+        ) -> ExecutionResult:
+            nonlocal total_model_calls, total_input_tokens, total_output_tokens
+            nonlocal total_estimated_cost
             action_result = live_policy.act(
-                env_name=adapter.env_id,
-                rules=adapter.rules,
-                action_format=adapter.action_format,
+                env_name=_adapter.env_id,
+                rules=_adapter.rules,
+                action_format=_adapter.action_format,
                 observation=observation,
             )
             total_model_calls += action_result.model_calls
@@ -352,115 +367,28 @@ def evaluate_baseline_cmd(
             total_output_tokens += action_result.output_tokens
             if action_result.estimated_cost_usd is not None:
                 total_estimated_cost += action_result.estimated_cost_usd
-            if not action_result.success or not action_result.action:
-                results.append(
-                    EvaluationResult(
-                        env_id=env_id,
-                        solved=False,
-                        reward=0.0,
-                        legal_action_count=legal_actions,
-                        steps_used=steps_used,
-                        optimal_steps=optimal,
-                        termination_reason=TerminationReason.EXECUTION_FAILURE,
-                        failure_summary=(action_result.error_details or "model_error"),
-                        latency=time.monotonic() - start,
-                        execution_failure=True,
-                    )
-                )
-                break
-            step_result = adapter.step(action_result.action)
-            if not step_result.is_legal:
-                results.append(
-                    EvaluationResult(
-                        env_id=env_id,
-                        solved=False,
-                        reward=0.0,
-                        legal_action_count=legal_actions,
-                        steps_used=steps_used,
-                        optimal_steps=optimal,
-                        termination_reason=TerminationReason.ILLEGAL_ACTION,
-                        failure_summary=step_result.feedback or "Illegal",
-                        latency=time.monotonic() - start,
-                        execution_failure=False,
-                    )
-                )
-                break
-            legal_actions += 1
-            if step_result.terminated:
-                solved = step_result.reward >= 1.0
-                reward = step_result.reward
-                results.append(
-                    EvaluationResult(
-                        env_id=env_id,
-                        solved=solved,
-                        reward=reward,
-                        legal_action_count=legal_actions,
-                        steps_used=steps_used,
-                        optimal_steps=optimal,
-                        termination_reason=TerminationReason.ENVIRONMENT_TERMINATION,
-                        failure_summary=None,
-                        latency=time.monotonic() - start,
-                        execution_failure=False,
-                    )
-                )
-                break
-            observation = step_result.observation
-        else:
-            results.append(
-                EvaluationResult(
-                    env_id=env_id,
-                    solved=False,
-                    reward=0.0,
-                    legal_action_count=legal_actions,
-                    steps_used=steps_used,
-                    optimal_steps=optimal,
-                    termination_reason=TerminationReason.STEP_LIMIT,
-                    failure_summary=None,
-                    latency=time.monotonic() - start,
-                    execution_failure=False,
-                )
+            return ExecutionResult(
+                success=action_result.success and action_result.action is not None,
+                output=action_result.action,
+                latency=action_result.latency,
+                failure_type=None if action_result.success else "execution_failure",
+                error_details=action_result.error_details,
             )
 
-    summary = format_evaluation_summary(results, spec.family)
-    summary += f"\n  Model calls: {total_model_calls}\n"
-    summary += f"  Input tokens: {total_input_tokens}\n"
-    summary += f"  Output tokens: {total_output_tokens}\n"
-    if input_price is not None and output_price is not None:
-        summary += f"  Estimated cost (USD): ${total_estimated_cost:.6f}\n"
-    print(summary)
+        results.append(
+            evaluate_action_provider_on_env(adapter, provide_action, seed, spec.optimal_steps)
+        )
 
-    from autoharness.harness_as_policy.artifacts import ArtifactStore
-
-    store = ArtifactStore(root=run_dir.parent, run_id=run_dir.name)
-    store.write_evaluation(
-        "llm-baseline",
-        {
-            "results": [
-                {
-                    "env_id": r.env_id,
-                    "solved": r.solved,
-                    "reward": r.reward,
-                    "legal_action_count": r.legal_action_count,
-                    "steps_used": r.steps_used,
-                    "optimal_steps": r.optimal_steps,
-                    "termination_reason": (
-                        r.termination_reason.value if r.termination_reason is not None else None
-                    ),
-                    "failure_summary": r.failure_summary,
-                    "latency": r.latency,
-                    "execution_failure": r.execution_failure,
-                }
-                for r in results
-            ],
-            "model_call_count": total_model_calls,
-            "input_tokens": total_input_tokens,
-            "output_tokens": total_output_tokens,
-            "estimated_cost_usd": total_estimated_cost
-            if input_price is not None and output_price is not None
-            else None,
-        },
+    usage = EvaluationUsage(
+        total_model_calls,
+        total_input_tokens,
+        total_output_tokens,
+        total_estimated_cost if input_price is not None and output_price is not None else None,
     )
-    return results
+    report = EvaluationReport.create("llm-baseline", protocol, results, usage)
+    print(format_evaluation_summary(report))
+    store.write_evaluation("llm-baseline", report.to_dict())
+    return report
 
 
 def main(args: list[str] | None = None) -> int:

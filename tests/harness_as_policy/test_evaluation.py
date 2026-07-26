@@ -108,6 +108,32 @@ def test_evaluate_policy_uses_20_fresh_seeded_adapters() -> None:
     assert report.aggregate.mean_reward == 1.0
 
 
+def test_evaluate_policy_records_factory_failure_and_continues() -> None:
+    factory_calls = 0
+
+    def factory() -> FakeAdapter:
+        nonlocal factory_calls
+        factory_calls += 1
+        if factory_calls == 1:
+            raise RuntimeError("factory boom")
+        return FakeAdapter()
+
+    protocol = EvaluationProtocol.create("Exact-v0", 9, [])
+    report = evaluate_policy(
+        "source",
+        EnvironmentSpec("Exact-v0", "fake", factory, 1, 1),
+        protocol,
+        FakeExecutor(),
+    )
+
+    assert len(report.results) == 20
+    assert report.results[0].termination_reason == TerminationReason.EXECUTION_FAILURE
+    assert report.results[0].failure_summary == "Adapter construction failed: factory boom"
+    assert report.results[0].action_attempt_count == 0
+    assert report.results[1].reward == 1.0
+    assert factory_calls == 20
+
+
 def test_report_uses_action_weighted_legality_and_excludes_actionless_failures() -> None:
     protocol = EvaluationProtocol("Exact-v0", tuple(range(20)), ())
     results = [

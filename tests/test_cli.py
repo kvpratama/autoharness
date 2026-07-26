@@ -329,7 +329,7 @@ def test_evaluate_cmd_creates_protocol_and_structured_report(tmp_path: Path) -> 
 def test_evaluate_cmd_reuses_persisted_protocol(tmp_path: Path) -> None:
     run_dir = tmp_path / "run"
     _write_evaluation_run(run_dir)
-    known_protocol = EvaluationProtocol.create("TowerOfHanoi-v0", 99, [1, 2])
+    known_protocol = EvaluationProtocol.create("TowerOfHanoi-v0", 99, [11, 22])
     (run_dir / "evaluation").mkdir()
     (run_dir / "evaluation" / "protocol.json").write_text(json.dumps(known_protocol.to_dict()))
 
@@ -340,6 +340,21 @@ def test_evaluate_cmd_reuses_persisted_protocol(tmp_path: Path) -> None:
         assert evaluate_cmd(run_dir) is not None
 
     assert mock_evaluate.call_args.args[2] == known_protocol
+
+
+def test_evaluate_cmd_rejects_protocol_with_stale_training_seeds(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    run_dir = tmp_path / "run"
+    _write_evaluation_run(run_dir)
+    protocol = EvaluationProtocol.create("TowerOfHanoi-v0", 99, [1, 2])
+    (run_dir / "evaluation").mkdir()
+    path = run_dir / "evaluation" / "protocol.json"
+    path.write_text(json.dumps(protocol.to_dict()))
+
+    assert evaluate_cmd(run_dir) is None
+    assert "training seeds do not match" in capsys.readouterr().err
+    assert json.loads(path.read_text()) == protocol.to_dict()
 
 
 def test_evaluate_cmd_rejects_malformed_protocol_without_overwriting(
@@ -425,6 +440,29 @@ def test_baseline_actionless_failure_is_excluded_from_legality(tmp_path: Path) -
     assert report.aggregate.action_attempt_count == 19
     assert report.aggregate.legal_action_count == 19
     assert report.aggregate.legal_action_rate == 1.0
+
+
+def test_baseline_records_policy_construction_failure_and_continues(tmp_path: Path) -> None:
+    run_dir = tmp_path / "run"
+    _write_evaluation_run(run_dir, env_id="Fake-v0")
+    adapters: list[FakeBaselineAdapter] = []
+    live_policy = Mock()
+    live_policy.act.return_value = LiveActionResult("[A C]", True, 0.01)
+
+    with (
+        patch("autoharness.cli.get_environment_spec", return_value=_baseline_spec(adapters)),
+        patch(
+            "autoharness.cli.LivePolicy",
+            side_effect=[RuntimeError("policy boom"), *[live_policy for _ in range(19)]],
+        ),
+    ):
+        report = evaluate_baseline_cmd(run_dir, "fake:model")
+
+    assert report is not None
+    assert len(report.results) == 20
+    assert report.results[0].termination_reason == TerminationReason.EXECUTION_FAILURE
+    assert report.results[0].failure_summary == "Policy construction failed: policy boom"
+    assert report.results[1].reward == 1.0
 
 
 def test_generated_and_baseline_reports_reuse_identical_persisted_seeds(tmp_path: Path) -> None:

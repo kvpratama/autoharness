@@ -66,7 +66,15 @@ class RolloutEvaluator:
         steps: list[StepResult] = []
         attempts = 0
         for _ in range(self._adapter.max_steps):
-            outcome = provider(observation)
+            try:
+                outcome = provider(observation)
+            except Exception as error:
+                return self._result(
+                    steps,
+                    attempts,
+                    TerminationReason.EXECUTION_FAILURE,
+                    f"Action provider failed: {error}",
+                )
             if not outcome.success or outcome.output is None:
                 reason = (
                     TerminationReason.CONTRACT_FAILURE
@@ -85,7 +93,15 @@ class RolloutEvaluator:
                     f"(checker={outcome.is_legal_action!r})",
                     observation,
                 )
-            step = self._adapter.step(action)
+            try:
+                step = self._adapter.step(action)
+            except Exception as error:
+                return self._result(
+                    steps,
+                    attempts,
+                    TerminationReason.EXECUTION_FAILURE,
+                    f"Environment step failed: {error}",
+                )
             steps.append(step)
             if not step.is_legal:
                 reason = (

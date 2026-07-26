@@ -332,3 +332,28 @@ def test_environment_creation_and_reset_failures_remain_distinct() -> None:
 
     assert creation.failure_summary == "Environment creation failed: create boom"
     assert reset.failure_summary == "Environment reset failed: reset boom"
+
+
+def test_action_provider_exception_becomes_execution_failure() -> None:
+    def raise_provider_error(_observation: str) -> ExecutionResult:
+        raise RuntimeError("provider boom")
+
+    result = RolloutEvaluator(FakeAdapter()).evaluate_actions(raise_provider_error)
+
+    assert result.termination_reason == TerminationReason.EXECUTION_FAILURE
+    assert result.failure_summary == "Action provider failed: provider boom"
+    assert result.action_attempt_count == 0
+
+
+def test_environment_step_exception_becomes_execution_failure() -> None:
+    class FailingStepAdapter(FakeAdapter):
+        def step(self, action: str) -> StepResult:
+            raise RuntimeError("step boom")
+
+    result = RolloutEvaluator(FailingStepAdapter()).evaluate_actions(
+        lambda _observation: ExecutionResult(True, "action", 0.0)
+    )
+
+    assert result.termination_reason == TerminationReason.EXECUTION_FAILURE
+    assert result.failure_summary == "Environment step failed: step boom"
+    assert result.action_attempt_count == 1

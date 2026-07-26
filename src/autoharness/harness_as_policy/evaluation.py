@@ -109,6 +109,31 @@ class EvaluationResult:
     latency: float
     execution_failure: bool
 
+    @classmethod
+    def from_execution_failure(
+        cls,
+        seed: int,
+        env_id: str,
+        optimal_steps: int,
+        failure_summary: str,
+        latency: float = 0.0,
+    ) -> EvaluationResult:
+        """Create an actionless execution-failure episode result."""
+        return cls(
+            seed=seed,
+            env_id=env_id,
+            solved=False,
+            reward=0.0,
+            legal_action_count=0,
+            action_attempt_count=0,
+            steps_used=0,
+            optimal_steps=optimal_steps,
+            termination_reason=TerminationReason.EXECUTION_FAILURE,
+            failure_summary=failure_summary,
+            latency=latency,
+            execution_failure=True,
+        )
+
 
 @dataclass(frozen=True)
 class EvaluationAggregate:
@@ -248,12 +273,25 @@ def evaluate_policy(
     if spec.env_id != protocol.env_id:
         raise ValueError("Evaluation protocol environment does not match specification")
     policy_executor = executor or PolicyExecutor()
-    results = [
-        evaluate_policy_on_env(
-            spec.create_adapter(), policy_executor, source, seed, spec.optimal_steps
+    results = []
+    for seed in protocol.episode_seeds:
+        start = time.monotonic()
+        try:
+            adapter = spec.create_adapter()
+        except Exception as error:
+            results.append(
+                EvaluationResult.from_execution_failure(
+                    seed,
+                    spec.env_id,
+                    spec.optimal_steps,
+                    f"Adapter construction failed: {error}",
+                    time.monotonic() - start,
+                )
+            )
+            continue
+        results.append(
+            evaluate_policy_on_env(adapter, policy_executor, source, seed, spec.optimal_steps)
         )
-        for seed in protocol.episode_seeds
-    ]
     return EvaluationReport.create("generated-policy", protocol, results)
 
 

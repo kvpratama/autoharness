@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import logging
 import sys
+import time
 from pathlib import Path
 from typing import TypedDict, cast
 
@@ -21,6 +22,7 @@ from autoharness.harness_as_policy.environments.registry import (
 from autoharness.harness_as_policy.evaluation import (
     EvaluationProtocol,
     EvaluationReport,
+    EvaluationResult,
     EvaluationUsage,
     evaluate_action_provider_on_env,
     evaluate_policy,
@@ -242,20 +244,22 @@ def _load_or_create_evaluation_protocol(
     store: ArtifactStore, config: dict[str, object], spec: EnvironmentSpec
 ) -> EvaluationProtocol:
     """Load the persisted protocol, or create it strictly from run configuration."""
-    existing = store.load_evaluation("protocol")
-    if existing is not None:
-        return EvaluationProtocol.from_dict(existing, spec.env_id)
-    environment_seed = config.get("environment_seed")
     training_seeds = config.get("training_episode_seeds")
-    if not isinstance(environment_seed, int) or isinstance(environment_seed, bool):
-        raise ValueError("Run config requires integer environment_seed for held-out evaluation")
     if not isinstance(training_seeds, list) or any(
         not isinstance(seed, int) or isinstance(seed, bool) for seed in training_seeds
     ):
         raise ValueError("Run config requires integer training_episode_seeds")
-    protocol = EvaluationProtocol.create(
-        spec.env_id, environment_seed, cast(list[int], training_seeds)
-    )
+    typed_training_seeds = cast(list[int], training_seeds)
+    existing = store.load_evaluation("protocol")
+    if existing is not None:
+        protocol = EvaluationProtocol.from_dict(existing, spec.env_id)
+        if list(protocol.training_episode_seeds) != typed_training_seeds:
+            raise ValueError("Evaluation protocol training seeds do not match run configuration")
+        return protocol
+    environment_seed = config.get("environment_seed")
+    if not isinstance(environment_seed, int) or isinstance(environment_seed, bool):
+        raise ValueError("Run config requires integer environment_seed for held-out evaluation")
+    protocol = EvaluationProtocol.create(spec.env_id, environment_seed, typed_training_seeds)
     store.write_evaluation("protocol", protocol.to_dict())
     return protocol
 
@@ -307,12 +311,37 @@ def evaluate_baseline_cmd(
         return None
 
     for seed in protocol.episode_seeds:
-        adapter = spec.create_adapter()
-        live_policy = LivePolicy(
-            model_id=model_id,
-            input_price_per_million=input_price,
-            output_price_per_million=output_price,
-        )
+        start = time.monotonic()
+        try:
+            adapter = spec.create_adapter()
+        except Exception as error:
+            results.append(
+                EvaluationResult.from_execution_failure(
+                    seed,
+                    spec.env_id,
+                    spec.optimal_steps,
+                    f"Adapter construction failed: {error}",
+                    time.monotonic() - start,
+                )
+            )
+            continue
+        try:
+            live_policy = LivePolicy(
+                model_id=model_id,
+                input_price_per_million=input_price,
+                output_price_per_million=output_price,
+            )
+        except Exception as error:
+            results.append(
+                EvaluationResult.from_execution_failure(
+                    seed,
+                    spec.env_id,
+                    spec.optimal_steps or adapter.max_steps,
+                    f"Policy construction failed: {error}",
+                    time.monotonic() - start,
+                )
+            )
+            continue
 
         def provide_action(
             observation: str,

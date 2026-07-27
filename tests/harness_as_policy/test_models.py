@@ -2,7 +2,13 @@
 
 from __future__ import annotations
 
+from dataclasses import FrozenInstanceError
+
+import pytest
+
 from autoharness.harness_as_policy.models import (
+    ActionAttempt,
+    AttemptErrorPhase,
     Candidate,
     CandidateRankKey,
     Event,
@@ -156,6 +162,27 @@ def test_rollout_result_fields() -> None:
     )
     assert result.heuristic == 0.5
     assert result.termination_reason == TerminationReason.STEP_LIMIT
+    assert result.attempts == []
+
+
+def test_action_attempt_is_immutable() -> None:
+    attempt = ActionAttempt(
+        observation="before",
+        action="[A C]",
+        policy_legal=True,
+        environment_legal=True,
+        resulting_observation="after",
+        reward=0.5,
+        terminated=False,
+        feedback="",
+        error_phase=None,
+    )
+
+    attribute = "action"
+    with pytest.raises(FrozenInstanceError):
+        setattr(attempt, attribute, "[A B]")
+
+    assert AttemptErrorPhase.POLICY_EXECUTION.value == "policy_execution"
 
 
 def test_step_result_fields() -> None:

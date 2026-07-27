@@ -12,7 +12,8 @@ from typing import Any, Literal, TypedDict
 from autoharness.harness_as_policy.artifacts import ArtifactStore
 from autoharness.harness_as_policy.assessment import (
     CandidateAssessor,
-    build_assessment_feedback,
+    build_assessment_trajectory,
+    build_initial_trajectory,
     failed_assessment,
     generate_episode_seeds,
     should_refine_legal_action,
@@ -299,11 +300,15 @@ def synthesize(
     assessor = CandidateAssessor(evaluator)
 
     try:
-        adapter.create()
-        # `seed` controls Thompson sampling only; this reset is an environment preflight.
-        adapter.reset(seed=None)
-    except Exception as e:
-        raise RuntimeError(f"Environment preflight failed — cannot start synthesis: {e}") from e
+        initial_observations = [
+            (episode_seed, evaluator.initial_observation(episode_seed))
+            for episode_seed in episode_seeds
+        ]
+    except Exception as error:
+        raise RuntimeError(
+            f"Environment preflight failed — cannot start synthesis: {error}"
+        ) from error
+    initial_trajectory = build_initial_trajectory(initial_observations)
 
     store.write_config(
         {
@@ -402,30 +407,11 @@ def synthesize(
         )
 
         child_id = f"{iteration:03d}"
-        feedback = (
-            build_assessment_feedback(parent.assessment) if parent.assessment is not None else []
+        trajectory = (
+            build_assessment_trajectory(parent.assessment)
+            if parent.assessment is not None
+            else initial_trajectory
         )
-        descriptor = None
-        if parent.termination_reason == TerminationReason.ILLEGAL_ACTION:
-            descriptor = "Policy produced an illegal action"
-        elif parent.termination_reason == TerminationReason.POLICY_REJECTED_ACTION:
-            descriptor = "is_legal_action rejected the proposed action; refine propose_action only"
-        elif parent.termination_reason == TerminationReason.LEGALITY_DISAGREEMENT:
-            descriptor = (
-                "is_legal_action accepted an action that the environment rejected; "
-                "refine both functions"
-            )
-        elif parent.termination_reason == TerminationReason.STEP_LIMIT:
-            descriptor = "Policy reached step limit without solving"
-        elif parent.termination_reason in (
-            TerminationReason.EXECUTION_FAILURE,
-            TerminationReason.CONTRACT_FAILURE,
-        ):
-            descriptor = "Policy execution failed at runtime"
-
-        if descriptor:
-            feedback.insert(0, descriptor)
-        feedback = feedback[:5]
 
         logger.info(
             "Refining parent %s (iteration=%d)",
@@ -435,20 +421,25 @@ def synthesize(
         refine_legal_action = parent.termination_reason != TerminationReason.POLICY_REJECTED_ACTION
         if parent.assessment is not None and should_refine_legal_action(parent.assessment):
             refine_legal_action = True
-        refine_result = refiner.refine(
-            env_name=adapter.env_id,
-            rules=adapter.rules,
-            action_format=adapter.action_format,
-            parent_source=parent.source,
-            parent_heuristic=parent.heuristic,
-            parent_reward=parent.terminal_reward,
-            parent_legal_actions=parent.legal_action_count,
-            parent_status=(
-                parent.termination_reason.value if parent.termination_reason else "unknown"
-            ),
-            feedback=feedback,
-            refine_legal_action=refine_legal_action,
-        )
+        try:
+            refine_result = refiner.refine(
+                env_name=adapter.env_id,
+                rules=adapter.rules,
+                action_format=adapter.action_format,
+                parent_source=parent.source,
+                parent_heuristic=parent.heuristic,
+                parent_reward=parent.terminal_reward,
+                parent_legal_actions=parent.legal_action_count,
+                parent_status=(
+                    parent.termination_reason.value if parent.termination_reason else "unknown"
+                ),
+                trajectory=trajectory,
+                refine_legal_action=refine_legal_action,
+            )
+        finally:
+            trace = refiner.last_trace
+            if trace is not None:
+                store.write_refinement(iteration, parent_id, refine_legal_action, trace)
         model_call_count = refiner.model_call_count
         logical_refinement_count = refiner.logical_refinement_count
 

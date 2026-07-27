@@ -6,6 +6,8 @@ from dataclasses import dataclass
 
 from autoharness.harness_as_policy.executor import ExecutionResult
 from autoharness.harness_as_policy.models import (
+    ActionAttempt,
+    AttemptErrorPhase,
     StepResult,
     TerminationReason,
 )
@@ -49,13 +51,19 @@ class FakeExecutor:
 class FakeAdapter:
     """Fake adapter that follows a scripted sequence of step results."""
 
-    def __init__(self, step_results: list[StepResult] | None = None) -> None:
+    def __init__(
+        self,
+        step_results: list[StepResult] | None = None,
+        *,
+        step_error: Exception | None = None,
+    ) -> None:
         self.env_id = "FakeEnv-v0"
         self.rules = "Fake rules"
         self.action_format = "[X Y]"
         self.max_steps = 10
         self._step_results = step_results or []
         self._step_index = -1
+        self._step_error = step_error
         self.step_calls: list[str] = []
 
     def create(self) -> None:
@@ -67,6 +75,8 @@ class FakeAdapter:
 
     def step(self, action: str) -> StepResult:
         self.step_calls.append(action)
+        if self._step_error is not None:
+            raise self._step_error
         self._step_index += 1
         if self._step_results and self._step_index < len(self._step_results):
             return self._step_results[self._step_index]
@@ -78,6 +88,92 @@ class FakeAdapter:
             terminated=False,
             feedback="",
         )
+
+
+def test_rollout_records_complete_successful_attempt_sequence() -> None:
+    adapter = FakeAdapter(
+        [
+            StepResult("board 1", "[A C]", True, 0.0, False, ""),
+            StepResult("board 2", "[C B]", True, 1.0, True, "won"),
+        ]
+    )
+    executor = FakeExecutor(step_results=[("[A C]", True), ("[C B]", True)])
+
+    result = RolloutEvaluator(adapter, executor).evaluate("source", seed=9)
+
+    assert result.attempts == [
+        ActionAttempt("initial observation", "[A C]", True, True, "board 1", 0.0, False, "", None),
+        ActionAttempt("board 1", "[C B]", True, True, "board 2", 1.0, True, "won", None),
+    ]
+
+
+def test_initial_observation_uses_requested_seed_without_policy_execution() -> None:
+    adapter = FakeAdapter()
+    executor = FakeExecutor(step_results=[("unused", True)])
+
+    observation = RolloutEvaluator(adapter, executor).initial_observation(123)
+
+    assert observation == "initial observation"
+    assert executor.step_results == [("unused", True)]
+    assert adapter.step_calls == []
+
+
+def test_execution_failure_records_board_and_error_phase() -> None:
+    result = RolloutEvaluator(FakeAdapter(), FakeExecutor([None])).evaluate("source")
+
+    assert result.attempts == [
+        ActionAttempt(
+            "initial observation",
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            "fail",
+            AttemptErrorPhase.POLICY_EXECUTION,
+        )
+    ]
+
+
+def test_checker_rejection_records_action_without_environment_result() -> None:
+    result = RolloutEvaluator(FakeAdapter(), FakeExecutor([("[A C]", False)])).evaluate("source")
+
+    attempt = result.attempts[0]
+    assert attempt.observation == "initial observation"
+    assert attempt.action == "[A C]"
+    assert attempt.policy_legal is False
+    assert attempt.environment_legal is None
+    assert attempt.error_phase == AttemptErrorPhase.POLICY_LEGALITY
+
+
+def test_environment_rejection_records_result_and_feedback() -> None:
+    adapter = FakeAdapter([StepResult("rejected board", "bad", False, 0.0, True, "bad move")])
+    result = RolloutEvaluator(adapter, FakeExecutor([("bad", True)])).evaluate("source")
+
+    attempt = result.attempts[0]
+    assert attempt.policy_legal is True
+    assert attempt.environment_legal is False
+    assert attempt.resulting_observation == "rejected board"
+    assert attempt.feedback == "bad move"
+    assert attempt.error_phase == AttemptErrorPhase.ENVIRONMENT_STEP
+
+
+def test_environment_exception_records_action_and_pre_action_board() -> None:
+    adapter = FakeAdapter(step_error=RuntimeError("step exploded"))
+    result = RolloutEvaluator(adapter, FakeExecutor([("[A C]", True)])).evaluate("source")
+
+    assert result.attempts[0] == ActionAttempt(
+        "initial observation",
+        "[A C]",
+        True,
+        None,
+        None,
+        None,
+        None,
+        "Environment step failed: step exploded",
+        AttemptErrorPhase.ENVIRONMENT_STEP,
+    )
 
 
 def test_rollout_solves_environment() -> None:

@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from autoharness.harness_as_policy.models import CandidateAssessment, EpisodeResult, Event
+from autoharness.harness_as_policy.refiner import RefinementTrace
 
 
 class ArtifactStore:
@@ -35,6 +36,7 @@ class ArtifactStore:
         self._run_dir.mkdir(parents=True, exist_ok=True)
         (self._run_dir / "candidates").mkdir(exist_ok=True)
         (self._run_dir / "rollouts").mkdir(exist_ok=True)
+        (self._run_dir / "refinements").mkdir(exist_ok=True)
         (self._run_dir / "evaluation").mkdir(exist_ok=True)
 
     def _write_json(self, path: Path, data: Any) -> None:
@@ -92,9 +94,9 @@ class ArtifactStore:
         tmp.rename(path)
 
     def write_assessment(self, candidate_id: str, assessment: CandidateAssessment) -> None:
-        """Persist a version-two aggregate assessment and all episode details."""
+        """Persist a version-three aggregate assessment and all episode details."""
         data = {
-            "schema_version": 2,
+            "schema_version": 3,
             "aggregate": {
                 "heuristic": assessment.heuristic,
                 "terminal_reward": assessment.terminal_reward,
@@ -139,7 +141,50 @@ class ArtifactStore:
                 }
                 for step in result.steps
             ],
+            "attempts": [
+                {
+                    "observation": attempt.observation,
+                    "action": attempt.action,
+                    "policy_legal": attempt.policy_legal,
+                    "environment_legal": attempt.environment_legal,
+                    "resulting_observation": attempt.resulting_observation,
+                    "reward": attempt.reward,
+                    "terminated": attempt.terminated,
+                    "feedback": attempt.feedback,
+                    "error_phase": attempt.error_phase.value if attempt.error_phase else None,
+                }
+                for attempt in result.attempts
+            ],
         }
+
+    def write_refinement(
+        self,
+        iteration: int,
+        parent_id: str,
+        refine_legal_action: bool,
+        trace: RefinementTrace,
+    ) -> None:
+        """Persist one complete logical-refinement audit."""
+        data = {
+            "iteration": iteration,
+            "parent_id": parent_id,
+            "refine_legal_action": refine_legal_action,
+            "prompt": trace.prompt,
+            "invocations": [
+                {
+                    "content": invocation.content,
+                    "normalized_text": invocation.normalized_text,
+                    "error_type": invocation.error_type,
+                    "error_message": invocation.error_message,
+                }
+                for invocation in trace.invocations
+            ],
+            "extracted_source": trace.extracted_source,
+            "outcome": trace.outcome,
+            "error_details": trace.error_details,
+        }
+        path = self._run_dir / "refinements" / f"{iteration:03d}.json"
+        self._write_json(path, data)
 
     def write_best_policy(self, source: str) -> None:
         path = self._run_dir / "best.py"

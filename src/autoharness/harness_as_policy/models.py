@@ -43,6 +43,29 @@ class StepResult:
     feedback: str
 
 
+class AttemptErrorPhase(StrEnum):
+    """Phase in which an action attempt failed."""
+
+    POLICY_EXECUTION = "policy_execution"
+    POLICY_LEGALITY = "policy_legality"
+    ENVIRONMENT_STEP = "environment_step"
+
+
+@dataclass(frozen=True)
+class ActionAttempt:
+    """One policy decision with its pre-action board and resulting outcome."""
+
+    observation: str
+    action: str | None
+    policy_legal: bool | None
+    environment_legal: bool | None
+    resulting_observation: str | None
+    reward: float | None
+    terminated: bool | None
+    feedback: str
+    error_phase: AttemptErrorPhase | None
+
+
 @dataclass
 class RolloutResult:
     """Result of one complete rollout."""
@@ -55,6 +78,7 @@ class RolloutResult:
     failure_summary: str | None
     last_observation: str | None = None
     action_attempt_count: int = 0
+    attempts: list[ActionAttempt] = field(default_factory=list)
 
 
 @dataclass

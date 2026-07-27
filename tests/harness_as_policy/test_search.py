@@ -7,6 +7,9 @@ import random
 import tempfile
 from pathlib import Path
 
+import pytest
+
+from autoharness.harness_as_policy.executor import ExecutionResult
 from autoharness.harness_as_policy.models import (
     Candidate,
     CandidateRankKey,
@@ -14,7 +17,12 @@ from autoharness.harness_as_policy.models import (
     StepResult,
     TerminationReason,
 )
-from autoharness.harness_as_policy.refiner import RefinerProtocol, RefinerResult
+from autoharness.harness_as_policy.refiner import (
+    ProviderInvocation,
+    RefinementTrace,
+    RefinerProtocol,
+    RefinerResult,
+)
 from autoharness.harness_as_policy.search import (
     RANKING_POLICY,
     _winner_explanation,
@@ -648,7 +656,8 @@ class FakeRefiner:
         self._responses = responses
         self._call_count = 0
         self.scopes: list[bool] = []
-        self.feedback: list[list[str]] = []
+        self.trajectories: list[str] = []
+        self._last_trace: RefinementTrace | None = None
 
     @property
     def model_call_count(self) -> int:
@@ -657,6 +666,10 @@ class FakeRefiner:
     @property
     def logical_refinement_count(self) -> int:
         return self._call_count
+
+    @property
+    def last_trace(self) -> RefinementTrace | None:
+        return self._last_trace
 
     def refine(
         self,
@@ -667,18 +680,21 @@ class FakeRefiner:
         parent_reward: float = 0.0,
         parent_legal_actions: int = 0,
         parent_status: str = "",
-        feedback: list[str] | None = None,
+        trajectory: str = "",
         env_name: str = "",
         *,
         refine_legal_action: bool,
     ) -> RefinerResult:
         self._call_count += 1
         self.scopes.append(refine_legal_action)
-        self.feedback.append(feedback or [])
+        self.trajectories.append(trajectory)
+        self._last_trace = RefinementTrace(prompt=f"prompt:{trajectory}", outcome="success")
         if self._responses:
             resp = self._responses.pop(0)
             if resp:
+                self._last_trace.extracted_source = resp
                 return RefinerResult(success=True, source=resp)
+        self._last_trace.outcome = "invalid_response"
         return RefinerResult(success=False, source=None)
 
 
@@ -712,7 +728,7 @@ def test_synthesize_reuses_shared_environment_seeds_for_every_candidate(tmp_path
     config = json.loads((tmp_path / result["run_id"] / "config.json").read_text())
     seeds = config["training_episode_seeds"]
     assert len(seeds) == 3
-    assert adapter.reset_seeds == [None, *seeds, *seeds]
+    assert adapter.reset_seeds == [*seeds, *seeds, *seeds]
     assert config["environment_seed"] == 17
     assert config["training_rollouts"] == 3
 
@@ -731,9 +747,8 @@ def test_synthesize_refines_only_action_after_checker_rejection() -> None:
         )
 
     assert refiner.scopes == [True, False]
-    assert refiner.feedback[1][0] == (
-        "is_legal_action rejected the proposed action; refine propose_action only"
-    )
+    assert "Policy legality check: false" in refiner.trajectories[1]
+    assert "Policy legality checker rejected action" in refiner.trajectories[1]
     assert adapter.step_calls == ["[X Y]"] * adapter.max_steps
 
 
@@ -751,6 +766,133 @@ def test_synthesize_refines_both_after_legality_disagreement() -> None:
         )
 
     assert refiner.scopes == [True, True]
-    assert refiner.feedback[1][0] == (
-        "is_legal_action accepted an action that the environment rejected; refine both functions"
+    assert "Policy legality check: true" in refiner.trajectories[1]
+    assert "Environment legality check: false" in refiner.trajectories[1]
+    assert "Legality disagreement" in refiner.trajectories[1]
+
+
+class SeedAwareAdapter(FakeAdapter):
+    def reset(self, seed: int | None = None) -> str:
+        self.reset_seeds.append(seed)
+        return f"initial board seed={seed}"
+
+
+def test_first_refinement_receives_every_seeded_board_without_executing_root(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    executed_sources: list[str] = []
+
+    class RecordingExecutor:
+        def __init__(self, timeout: int, max_source_size: int) -> None:
+            self.timeout = timeout
+            self.max_source_size = max_source_size
+
+        def execute(self, source: str, observation: str) -> ExecutionResult:
+            executed_sources.append(source)
+            return ExecutionResult(
+                success=True,
+                output="[X Y]",
+                latency=0.0,
+                is_legal_action=True,
+            )
+
+    monkeypatch.setattr(
+        "autoharness.harness_as_policy.search.PolicyExecutor",
+        RecordingExecutor,
     )
+    adapter = SeedAwareAdapter()
+    refiner = FakeRefiner([ACCEPTED_BY_CHECKER_SOURCE])
+
+    result = synthesize(
+        adapter=adapter,
+        profile=Profile.SMOKE,
+        refiner=refiner,
+        artifact_root=tmp_path,
+        refinements=1,
+        environment_seed=17,
+        training_rollouts=3,
+    )
+
+    seeds = json.loads((tmp_path / result["run_id"] / "config.json").read_text())[
+        "training_episode_seeds"
+    ]
+    first = refiner.trajectories[0]
+    assert all(f"Seed: {seed}" in first for seed in seeds)
+    assert all(f"initial board seed={seed}" in first for seed in seeds)
+    assert first.count("No action attempted; implement the initial policy.") == 3
+    assert "Root policy — replace me" not in first
+    assert executed_sources
+    from autoharness.harness_as_policy.search import ROOT_SOURCE
+
+    assert ROOT_SOURCE not in executed_sources
+
+
+def test_later_refinement_receives_all_episode_attempts_without_truncation(
+    tmp_path: Path,
+) -> None:
+    adapter = FakeAdapter()
+    adapter.max_steps = 6
+    refiner = FakeRefiner([ACCEPTED_BY_CHECKER_SOURCE, ACCEPTED_BY_CHECKER_SOURCE])
+
+    synthesize(
+        adapter=adapter,
+        profile=Profile.SMOKE,
+        refiner=refiner,
+        artifact_root=tmp_path,
+        refinements=2,
+        training_rollouts=6,
+    )
+
+    second = refiner.trajectories[1]
+    assert second.count("Episode ") == 6
+    assert second.count("Attempt 6") == 6
+    assert second.count("Proposed action:\n[X Y]") == 36
+
+
+def test_provider_error_trace_is_persisted_before_propagation(tmp_path: Path) -> None:
+    class RaisingRefiner(FakeRefiner):
+        def refine(
+            self,
+            rules: str = "",
+            action_format: str = "",
+            parent_source: str = "",
+            parent_heuristic: float = 0.0,
+            parent_reward: float = 0.0,
+            parent_legal_actions: int = 0,
+            parent_status: str = "",
+            trajectory: str = "",
+            env_name: str = "",
+            *,
+            refine_legal_action: bool,
+        ) -> RefinerResult:
+            self._call_count += 1
+            self._last_trace = RefinementTrace(
+                prompt=f"exact:{trajectory}",
+                invocations=[
+                    ProviderInvocation(error_type="ValueError", error_message="provider failed")
+                ],
+                outcome="provider_error",
+                error_details="provider failed",
+            )
+            raise ValueError("provider failed")
+
+    with pytest.raises(ValueError, match="provider failed"):
+        synthesize(
+            adapter=FakeAdapter(),
+            profile=Profile.SMOKE,
+            refiner=RaisingRefiner([]),
+            artifact_root=tmp_path,
+            refinements=1,
+        )
+
+    run_dir = next(path for path in tmp_path.iterdir() if path.is_dir())
+    data = json.loads((run_dir / "refinements" / "001.json").read_text())
+    assert data["outcome"] == "provider_error"
+    assert data["prompt"].startswith("exact:Episode 1")
+    assert data["invocations"][0] == {
+        "content": None,
+        "normalized_text": None,
+        "error_type": "ValueError",
+        "error_message": "provider failed",
+    }

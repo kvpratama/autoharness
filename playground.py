@@ -98,7 +98,7 @@ def main() -> int:
             parent_reward=0.0,
             parent_legal_actions=3,
             parent_status="step_limit",
-            feedback=["Did not solve within step limit"],
+            trajectory="Did not solve within step limit",
             env_name="TowerOfHanoi-v0",
             refine_legal_action=True,
         )

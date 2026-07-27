@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import ast
 import os
-from dataclasses import dataclass
+import re
+from dataclasses import dataclass, field
 from typing import Any, Protocol
 
 import anthropic
@@ -93,6 +94,27 @@ class RefinerResult:
     error_details: str | None = None
 
 
+@dataclass
+class ProviderInvocation:
+    """Auditable outcome of one provider invocation."""
+
+    content: object | None = None
+    normalized_text: str | None = None
+    error_type: str | None = None
+    error_message: str | None = None
+
+
+@dataclass
+class RefinementTrace:
+    """Exact prompt and provider outcomes for one logical refinement."""
+
+    prompt: str
+    invocations: list[ProviderInvocation] = field(default_factory=list)
+    extracted_source: str | None = None
+    outcome: str = "in_progress"
+    error_details: str | None = None
+
+
 REFINER_SYSTEM_PROMPT = (
     "You are a policy-synthesis assistant. Your task is to write a Python "
     "module that solves a game by implementing two functions.\n"
@@ -113,7 +135,7 @@ REFINER_SYSTEM_PROMPT = (
     "\n"
     "You may define private helper functions and internal data structures.\n"
     "Do NOT use filesystem, network, subprocess, or dynamic-code operations.\n"
-    "Return ONLY complete, runnable Python source code.\n"
+    "\nAutoHarness-specific constraints:\n"
     "\n"
     "Parent source:\n"
     "```python\n"
@@ -125,16 +147,28 @@ REFINER_SYSTEM_PROMPT = (
     "Parent legal actions: {parent_legal_actions}\n"
     "Parent status: {parent_status}\n"
     "\n"
-    "Feedback from previous attempt (most critical first):\n"
-    "{feedback}\n"
+    "Complete game trajectory:\n{trajectory}\n"
     "\n"
-    "Instructions:\n"
-    "1. Preserve working behavior from the parent.\n"
-    "2. Reason about failures and the feedback above.\n"
-    "3. Avoid a fixed move script — implement a general algorithm.\n"
-    "4. Return one COMPLETE replacement module.\n"
-    "5. If the parent solved the environment perfectly, "
+    "Preserve working behavior and avoid a fixed move script; implement a general algorithm.\n"
+    "Return one complete replacement module. If the parent solved the environment perfectly, "
     "return the same source unchanged.\n"
+    "Make sure to follow these instructions.\n"
+    "* Think step by step about the code, the game boards and the error feedback.\n"
+    "* Reason about each action through the game board and write down critical failure steps.\n"
+    "* Reason about code refinements that can help fix the failure steps.\n"
+    "* Reason about the entire sequence of actions and write down the progress of the game "
+    "as a value between 0 and 1.\n"
+    "* Reason about code refinements that can help improve the game progress.\n"
+    "* Reason about code refinements that can avoid running in loops.\n"
+    "* Write down your thoughts before writing the code.\n"
+    "* Make sure to follow the given function signatures.\n"
+    "* Make sure the new code can satisfy all the observed game boards.\n"
+    "* Make sure the new code can fix all the current errors.\n"
+    "* Make sure to only produce code that is safe to execute.\n"
+    "* Make sure the code is concise and precise.\n"
+    "* If necessary, randomly sample one of the best legal actions and return it.\n"
+    "* Do not use any try-except blocks.\n"
+    "* Write your functions in a python code block enclosed in ```python and ```.\n"
 )
 
 
@@ -147,12 +181,11 @@ def build_refiner_prompt(
     parent_reward: float,
     parent_legal_actions: int,
     parent_status: str,
-    feedback: list[str],
+    trajectory: str,
     *,
     refine_legal_action: bool,
 ) -> str:
     """Build the refiner prompt with all context."""
-    fb_text = "\n".join(f"- {f}" for f in feedback[:5]) if feedback else "No feedback."
     refinement_scope = (
         "Refine both `propose_action` and `is_legal_action`."
         if refine_legal_action
@@ -170,33 +203,18 @@ def build_refiner_prompt(
         parent_reward=parent_reward,
         parent_legal_actions=parent_legal_actions,
         parent_status=parent_status,
-        feedback=fb_text,
+        trajectory=trajectory,
         refinement_scope=refinement_scope,
     )
 
 
 def _extract_source(response: str) -> str | None:
-    """Extract Python source from model response."""
-    text = response.strip()
-    if not text:
+    """Extract one fenced Python module from a model response."""
+    matches = re.findall(r"```python\s*\n(.*?)```", response, flags=re.DOTALL)
+    if len(matches) != 1:
         return None
-    # Try to extract from code fence
-    if "```python" in text:
-        parts = text.split("```python")
-        if len(parts) >= 2:
-            code = parts[1].split("```")[0].strip()
-            if code:
-                return code
-    elif "```" in text:
-        parts = text.split("```")
-        if len(parts) >= 2:
-            code = parts[1].strip()
-            if code:
-                return code
-    # Fall back to raw text
-    if "def propose_action" in text:
-        return text
-    return None
+    source = matches[0].strip()
+    return source or None
 
 
 def _has_policy_contract(source: str) -> bool:
@@ -250,6 +268,8 @@ class RefinerProtocol(Protocol):
     def model_call_count(self) -> int: ...
     @property
     def logical_refinement_count(self) -> int: ...
+    @property
+    def last_trace(self) -> RefinementTrace | None: ...
     def refine(
         self,
         rules: str,
@@ -259,7 +279,7 @@ class RefinerProtocol(Protocol):
         parent_reward: float,
         parent_legal_actions: int,
         parent_status: str,
-        feedback: list[str],
+        trajectory: str,
         env_name: str = "",
         *,
         refine_legal_action: bool,
@@ -278,6 +298,7 @@ class Refiner:
             raise ValueError("Either model or model_id must be provided")
         self._model_call_count: int = 0
         self._logical_refinement_count: int = 0
+        self._last_trace: RefinementTrace | None = None
 
     @property
     def model_call_count(self) -> int:
@@ -286,6 +307,10 @@ class Refiner:
     @property
     def logical_refinement_count(self) -> int:
         return self._logical_refinement_count
+
+    @property
+    def last_trace(self) -> RefinementTrace | None:
+        return self._last_trace
 
     def refine(
         self,
@@ -296,7 +321,7 @@ class Refiner:
         parent_reward: float,
         parent_legal_actions: int,
         parent_status: str,
-        feedback: list[str],
+        trajectory: str,
         env_name: str = "",
         *,
         refine_legal_action: bool,
@@ -312,9 +337,11 @@ class Refiner:
             parent_reward=parent_reward,
             parent_legal_actions=parent_legal_actions,
             parent_status=parent_status,
-            feedback=feedback,
+            trajectory=trajectory,
             refine_legal_action=refine_legal_action,
         )
+        trace = RefinementTrace(prompt=prompt)
+        self._last_trace = trace
         # Attempt with one retry on transport error
         last_error: str | None = None
         handler = _get_langfuse_handler()
@@ -325,21 +352,35 @@ class Refiner:
                 self._model_call_count += 1
             except Exception as e:
                 self._model_call_count += 1
+                trace.invocations.append(
+                    ProviderInvocation(error_type=type(e).__name__, error_message=str(e))
+                )
                 if _is_transient_error(e):
                     last_error = str(e)
                     continue
+                trace.outcome = "provider_error"
+                trace.error_details = str(e)
                 raise
             content = _normalize_content(response)
+            trace.invocations.append(
+                ProviderInvocation(content=response.content, normalized_text=content)
+            )
             source = _extract_source(content)
+            trace.extracted_source = source
             if source and _has_policy_contract(source):
+                trace.outcome = "success"
                 return RefinerResult(success=True, source=source)
+            trace.outcome = "invalid_response"
+            trace.error_details = "Model response did not contain both required policy functions"
             return RefinerResult(
                 success=False,
                 source=None,
                 error_details="Model response did not contain both required policy functions",
             )
+        trace.outcome = "transport_failure"
+        trace.error_details = f"Model transport failure after 2 attempts: {last_error}"
         return RefinerResult(
             success=False,
             source=None,
-            error_details=f"Model transport failure after 2 attempts: {last_error}",
+            error_details=trace.error_details,
         )

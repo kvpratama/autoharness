@@ -9,6 +9,7 @@ from statistics import fmean
 from typing import Protocol
 
 from autoharness.harness_as_policy.models import (
+    ActionAttempt,
     CandidateAssessment,
     EpisodeResult,
     RolloutResult,
@@ -107,30 +108,74 @@ def failed_assessment(error: str) -> CandidateAssessment:
     )
 
 
-def build_assessment_feedback(assessment: CandidateAssessment) -> list[str]:
-    """Build bounded deterministic feedback using the representative episode only."""
-    lines = [
-        f"{len(assessment.episodes)} episodes: mean H={assessment.heuristic:.3f}, "
-        f"mean reward={assessment.terminal_reward:.3f}",
-        "Termination counts: "
-        + ", ".join(
-            f"{reason.value}={count}"
-            for reason, count in sorted(
-                assessment.termination_counts.items(), key=lambda item: item[0].value
+def _value(value: object | None) -> str:
+    if value is None:
+        return "not reached"
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    return str(value)
+
+
+def _field(label: str, value: object | None) -> str:
+    return f"{label}:\n{_value(value)}"
+
+
+def build_initial_trajectory(observations: list[tuple[int, str]]) -> str:
+    """Render every seeded initial board without executing a policy."""
+    return "\n\n".join(
+        "\n".join(
+            (
+                f"Episode {index}",
+                f"Seed: {seed}",
+                _field("Initial board", observation),
+                "Action attempts: none",
+                "Feedback:\nNo action attempted; implement the initial policy.",
             )
-        ),
-    ]
-    if assessment.representative_episode_index is not None:
-        episode = assessment.episodes[assessment.representative_episode_index]
-        lines.append(
-            f"Representative episode: seed={episode.seed}, "
-            f"termination={episode.rollout.termination_reason.value}"
         )
-    if assessment.failure_summary:
-        lines.append(f"Representative failure: {assessment.failure_summary}")
-    if assessment.last_observation:
-        lines.append(f"Representative observation: {assessment.last_observation}")
-    return lines[:5]
+        for index, (seed, observation) in enumerate(observations, start=1)
+    )
+
+
+def _render_attempt(index: int, attempt: ActionAttempt) -> str:
+    return "\n".join(
+        (
+            f"Attempt {index}",
+            _field("Board before action", attempt.observation),
+            _field("Proposed action", attempt.action),
+            f"Policy legality check: {_value(attempt.policy_legal)}",
+            f"Environment legality check: {_value(attempt.environment_legal)}",
+            _field("Feedback", attempt.feedback),
+            _field("Board after action", attempt.resulting_observation),
+            f"Reward: {_value(attempt.reward)}",
+            f"Terminated: {_value(attempt.terminated)}",
+            f"Error phase: {_value(attempt.error_phase)}",
+        )
+    )
+
+
+def build_assessment_trajectory(assessment: CandidateAssessment) -> str:
+    """Render every episode and action attempt in assessment order."""
+    episodes: list[str] = []
+    for episode_index, episode in enumerate(assessment.episodes, start=1):
+        rollout = episode.rollout
+        initial = rollout.attempts[0].observation if rollout.attempts else rollout.last_observation
+        lines = [
+            f"Episode {episode_index}",
+            f"Seed: {episode.seed}",
+            _field("Initial board", initial),
+        ]
+        lines.extend(
+            _render_attempt(index, attempt)
+            for index, attempt in enumerate(rollout.attempts, start=1)
+        )
+        lines.extend(
+            (
+                f"Rollout termination: {rollout.termination_reason.value}",
+                _field("Rollout failure summary", rollout.failure_summary),
+            )
+        )
+        episodes.append("\n\n".join(lines))
+    return "\n\n".join(episodes)
 
 
 def should_refine_legal_action(assessment: CandidateAssessment) -> bool:

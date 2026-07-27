@@ -8,6 +8,8 @@ from typing import Protocol
 from autoharness.harness_as_policy.environments.base import EnvironmentAdapter
 from autoharness.harness_as_policy.executor import ExecutionResult, PolicyExecutor
 from autoharness.harness_as_policy.models import (
+    ActionAttempt,
+    AttemptErrorPhase,
     RolloutResult,
     StepResult,
     TerminationReason,
@@ -40,6 +42,11 @@ class RolloutEvaluator:
             checks_legality=True,
         )
 
+    def initial_observation(self, seed: int) -> str:
+        """Create and reset the environment for one seeded initial board."""
+        self._adapter.create()
+        return self._adapter.reset(seed=seed)
+
     def evaluate_actions(
         self, provider: ActionProvider, seed: int | None = None, checks_legality: bool = False
     ) -> RolloutResult:
@@ -48,6 +55,7 @@ class RolloutEvaluator:
             self._adapter.create()
         except Exception as error:
             return self._result(
+                [],
                 [],
                 0,
                 TerminationReason.EXECUTION_FAILURE,
@@ -58,22 +66,39 @@ class RolloutEvaluator:
         except Exception as error:
             return self._result(
                 [],
+                [],
                 0,
                 TerminationReason.EXECUTION_FAILURE,
                 f"Environment reset failed: {error}",
             )
 
         steps: list[StepResult] = []
+        attempt_records: list[ActionAttempt] = []
         attempts = 0
         for _ in range(self._adapter.max_steps):
             try:
                 outcome = provider(observation)
             except Exception as error:
+                failure = f"Action provider failed: {error}"
+                attempt_records.append(
+                    ActionAttempt(
+                        observation,
+                        None,
+                        None,
+                        None,
+                        None,
+                        None,
+                        None,
+                        failure,
+                        AttemptErrorPhase.POLICY_EXECUTION,
+                    )
+                )
                 return self._result(
                     steps,
+                    attempt_records,
                     attempts,
                     TerminationReason.EXECUTION_FAILURE,
-                    f"Action provider failed: {error}",
+                    failure,
                     observation,
                 )
             if not outcome.success or outcome.output is None:
@@ -82,29 +107,89 @@ class RolloutEvaluator:
                     if outcome.failure_type == "contract_failure"
                     else TerminationReason.EXECUTION_FAILURE
                 )
-                return self._result(steps, attempts, reason, outcome.error_details, observation)
+                attempt_records.append(
+                    ActionAttempt(
+                        observation,
+                        None,
+                        None,
+                        None,
+                        None,
+                        None,
+                        None,
+                        outcome.error_details or "",
+                        AttemptErrorPhase.POLICY_EXECUTION,
+                    )
+                )
+                return self._result(
+                    steps, attempt_records, attempts, reason, outcome.error_details, observation
+                )
             action = outcome.output
             attempts += 1
             if checks_legality and outcome.is_legal_action is not True:
+                failure = (
+                    f"Policy legality checker rejected action {action!r} "
+                    f"(checker={outcome.is_legal_action!r})"
+                )
+                attempt_records.append(
+                    ActionAttempt(
+                        observation,
+                        action,
+                        False,
+                        None,
+                        None,
+                        None,
+                        None,
+                        failure,
+                        AttemptErrorPhase.POLICY_LEGALITY,
+                    )
+                )
                 return self._result(
                     steps,
+                    attempt_records,
                     attempts,
                     TerminationReason.POLICY_REJECTED_ACTION,
-                    f"Policy legality checker rejected action {action!r} "
-                    f"(checker={outcome.is_legal_action!r})",
+                    failure,
                     observation,
                 )
             try:
                 step = self._adapter.step(action)
             except Exception as error:
+                failure = f"Environment step failed: {error}"
+                attempt_records.append(
+                    ActionAttempt(
+                        observation,
+                        action,
+                        outcome.is_legal_action if checks_legality else None,
+                        None,
+                        None,
+                        None,
+                        None,
+                        failure,
+                        AttemptErrorPhase.ENVIRONMENT_STEP,
+                    )
+                )
                 return self._result(
                     steps,
+                    attempt_records,
                     attempts,
                     TerminationReason.EXECUTION_FAILURE,
-                    f"Environment step failed: {error}",
+                    failure,
                     observation,
                 )
             steps.append(step)
+            attempt_records.append(
+                ActionAttempt(
+                    observation,
+                    action,
+                    outcome.is_legal_action if checks_legality else None,
+                    step.is_legal,
+                    step.observation,
+                    step.reward,
+                    step.terminated,
+                    step.feedback,
+                    None if step.is_legal else AttemptErrorPhase.ENVIRONMENT_STEP,
+                )
+            )
             if not step.is_legal:
                 reason = (
                     TerminationReason.LEGALITY_DISAGREEMENT
@@ -117,17 +202,22 @@ class RolloutEvaluator:
                         "Legality disagreement: checker=True, environment=False; "
                         f"environment feedback: {detail}"
                     )
-                return self._result(steps, attempts, reason, detail)
+                return self._result(steps, attempt_records, attempts, reason, detail)
             if step.terminated:
                 return self._result(
-                    steps, attempts, TerminationReason.ENVIRONMENT_TERMINATION, None
+                    steps,
+                    attempt_records,
+                    attempts,
+                    TerminationReason.ENVIRONMENT_TERMINATION,
+                    None,
                 )
             observation = step.observation
-        return self._result(steps, attempts, TerminationReason.STEP_LIMIT, None)
+        return self._result(steps, attempt_records, attempts, TerminationReason.STEP_LIMIT, None)
 
     @staticmethod
     def _result(
         steps: list[StepResult],
+        attempt_records: list[ActionAttempt],
         attempts: int,
         reason: TerminationReason,
         failure: str | None,
@@ -151,4 +241,5 @@ class RolloutEvaluator:
             failure_summary=failure,
             last_observation=last_observation or (steps[-1].observation if steps else None),
             action_attempt_count=attempts,
+            attempts=attempt_records,
         )

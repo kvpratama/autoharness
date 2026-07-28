@@ -5,6 +5,7 @@ from __future__ import annotations
 import ast
 import os
 import re
+import secrets
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
@@ -16,20 +17,48 @@ from google.genai import errors as google_errors
 from langchain.chat_models import init_chat_model
 from langchain_core.language_models import BaseChatModel
 from langchain_core.runnables import RunnableConfig
+from langfuse import Langfuse
 from langfuse.langchain import CallbackHandler
+from opentelemetry.sdk.trace.id_generator import IdGenerator
 
-_langfuse_handler: CallbackHandler | None = None
+
+class _SystemRandomIdGenerator(IdGenerator):
+    """Generate OTel IDs independently of game-controlled global randomness."""
+
+    def generate_span_id(self) -> int:
+        span_id = secrets.randbits(64)
+        while span_id == 0:
+            span_id = secrets.randbits(64)
+        return span_id
+
+    def generate_trace_id(self) -> int:
+        trace_id = secrets.randbits(128)
+        while trace_id == 0:
+            trace_id = secrets.randbits(128)
+        return trace_id
+
+
+_LANGFUSE_ID_GENERATOR = _SystemRandomIdGenerator()
 
 
 def _get_langfuse_handler() -> CallbackHandler | None:
+    """Initialize Langfuse and return a handler for one refiner instance.
+
+    Langfuse v4 uses an OpenTelemetry-based architecture where the OTel
+    TracerProvider/exporter is registered by the ``Langfuse()`` constructor.
+    We must call ``Langfuse()`` explicitly *before* instantiating
+    ``CallbackHandler`` so the process-wide client uses IDs independent of the
+    game-seeded global random state. ``Refiner`` owns and reuses the returned
+    handler for all of its model calls.
+    """
     if "PYTEST_CURRENT_TEST" in os.environ:
         return None
     if os.environ.get("LANGFUSE_ENABLED", "").lower() not in ("1", "true", "yes"):
         return None
-    global _langfuse_handler
-    if _langfuse_handler is None:
-        _langfuse_handler = CallbackHandler()
-    return _langfuse_handler
+    # Explicitly initialize the Langfuse client so the OTel pipeline is set up
+    # before CallbackHandler calls get_client() internally.
+    Langfuse(id_generator=_LANGFUSE_ID_GENERATOR)
+    return CallbackHandler()
 
 
 def _is_transient_error(e: Exception) -> bool:
@@ -296,6 +325,7 @@ class Refiner:
             self._model = init_chat_model(model_id)
         else:
             raise ValueError("Either model or model_id must be provided")
+        self._langfuse_handler = _get_langfuse_handler()
         self._model_call_count: int = 0
         self._logical_refinement_count: int = 0
         self._last_trace: RefinementTrace | None = None
@@ -344,8 +374,9 @@ class Refiner:
         self._last_trace = trace
         # Attempt with one retry on transport error
         last_error: str | None = None
-        handler = _get_langfuse_handler()
-        config: RunnableConfig = {"callbacks": [handler]} if handler else {}
+        config: RunnableConfig = (
+            {"callbacks": [self._langfuse_handler]} if self._langfuse_handler else {}
+        )
         for _ in range(2):
             try:
                 response = self._model.invoke(prompt, config=config)

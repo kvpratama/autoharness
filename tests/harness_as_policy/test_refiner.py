@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from typing import Any
+from unittest.mock import sentinel
 
 import pytest
 from langchain_core.callbacks import CallbackManagerForLLMRun
@@ -10,6 +11,7 @@ from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import AIMessage, BaseMessage
 from langchain_core.outputs import ChatGeneration, ChatResult
 
+from autoharness.harness_as_policy import refiner as refiner_module
 from autoharness.harness_as_policy.refiner import (
     Refiner,
     RefinerProtocol,
@@ -55,6 +57,50 @@ def is_legal_action(board: str, action: str) -> bool:
 """.strip()
 
 COMPLETE_RESPONSE = f"Analysis\n```python\n{COMPLETE_SOURCE}\n```"
+
+
+def test_langfuse_uses_ids_independent_of_game_random_seed(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Langfuse IDs must not use global random state seeded by TextArena."""
+    client_kwargs: dict[str, object] = {}
+
+    def fake_langfuse(**kwargs: object) -> None:
+        client_kwargs.update(kwargs)
+
+    monkeypatch.delenv("PYTEST_CURRENT_TEST")
+    monkeypatch.setenv("LANGFUSE_ENABLED", "true")
+    monkeypatch.setattr(refiner_module, "Langfuse", fake_langfuse)
+    monkeypatch.setattr(refiner_module, "CallbackHandler", lambda: sentinel.handler)
+
+    assert refiner_module._get_langfuse_handler() is sentinel.handler
+    assert "id_generator" in client_kwargs
+
+
+def test_refiner_reuses_one_langfuse_handler(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A refiner initializes its tracing handler once and reuses it across calls."""
+    handler_initializations = 0
+
+    def fake_get_handler() -> None:
+        nonlocal handler_initializations
+        handler_initializations += 1
+
+    monkeypatch.setattr(refiner_module, "_get_langfuse_handler", fake_get_handler)
+    refiner = Refiner(model=FakeChatModel(responses=[COMPLETE_RESPONSE, COMPLETE_RESPONSE]))
+
+    for _ in range(2):
+        result = refiner.refine(
+            rules="rules",
+            action_format="action",
+            parent_source=COMPLETE_SOURCE,
+            parent_heuristic=0.0,
+            parent_reward=0.0,
+            parent_legal_actions=0,
+            parent_status="unknown",
+            trajectory="trajectory",
+            refine_legal_action=True,
+        )
+        assert result.success
+
+    assert handler_initializations == 1
 
 
 def test_refiner_returns_source() -> None:

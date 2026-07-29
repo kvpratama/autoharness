@@ -896,3 +896,54 @@ def test_provider_error_trace_is_persisted_before_propagation(tmp_path: Path) ->
         "error_type": "ValueError",
         "error_message": "provider failed",
     }
+
+
+def test_refinement_persistence_failure_does_not_abort_successful_run(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fail_write_refinement(*args: object, **kwargs: object) -> None:
+        raise OSError("artifact write failed")
+
+    monkeypatch.setattr(
+        "autoharness.harness_as_policy.search.ArtifactStore.write_refinement",
+        fail_write_refinement,
+    )
+
+    result = synthesize(
+        adapter=FakeAdapter(),
+        profile=Profile.SMOKE,
+        refiner=FakeRefiner([ACCEPTED_BY_CHECKER_SOURCE]),
+        artifact_root=tmp_path,
+        refinements=1,
+    )
+
+    assert result["logical_refinement_count"] == 1
+
+
+def test_refinement_persistence_failure_does_not_replace_refiner_error(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fail_write_refinement(*args: object, **kwargs: object) -> None:
+        raise OSError("artifact write failed")
+
+    def fail_refine(**kwargs: object) -> RefinerResult:
+        raise ValueError("provider failed")
+
+    refiner = FakeRefiner([])
+    refiner._last_trace = RefinementTrace(prompt="prompt", outcome="provider_error")
+    monkeypatch.setattr(refiner, "refine", fail_refine)
+    monkeypatch.setattr(
+        "autoharness.harness_as_policy.search.ArtifactStore.write_refinement",
+        fail_write_refinement,
+    )
+
+    with pytest.raises(ValueError, match="provider failed"):
+        synthesize(
+            adapter=FakeAdapter(),
+            profile=Profile.SMOKE,
+            refiner=refiner,
+            artifact_root=tmp_path,
+            refinements=1,
+        )

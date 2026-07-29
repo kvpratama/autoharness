@@ -200,6 +200,18 @@ def test_refiner_extracts_only_fenced_source_after_visible_analysis() -> None:
     assert result.source == COMPLETE_SOURCE
 
 
+def test_extract_source_returns_final_fenced_python_block() -> None:
+    response = f"```python\nfirst = True\n```\nRevised:\n```python\n{COMPLETE_SOURCE}\n```"
+
+    assert refiner_module._extract_source(response) == COMPLETE_SOURCE
+
+
+def test_extract_source_rejects_empty_final_fenced_python_block() -> None:
+    response = f"```python\n{COMPLETE_SOURCE}\n```\nRevised:\n```python\n\n```"
+
+    assert refiner_module._extract_source(response) is None
+
+
 def test_refiner_rejects_unfenced_source() -> None:
     result = Refiner(model=FakeChatModel([COMPLETE_SOURCE])).refine(
         rules="Rules",

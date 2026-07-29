@@ -238,11 +238,11 @@ def build_refiner_prompt(
 
 
 def _extract_source(response: str) -> str | None:
-    """Extract one fenced Python module from a model response."""
+    """Extract the final fenced Python module from a model response."""
     matches = re.findall(r"```python\s*\n(.*?)```", response, flags=re.DOTALL)
-    if len(matches) != 1:
+    if not matches:
         return None
-    source = matches[0].strip()
+    source = matches[-1].strip()
     return source or None
 
 

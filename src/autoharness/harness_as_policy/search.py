@@ -439,7 +439,10 @@ def synthesize(
         finally:
             trace = refiner.last_trace
             if trace is not None:
-                store.write_refinement(iteration, parent_id, refine_legal_action, trace)
+                try:
+                    store.write_refinement(iteration, parent_id, refine_legal_action, trace)
+                except Exception:
+                    logger.warning("Failed to persist refinement trace", exc_info=True)
         model_call_count = refiner.model_call_count
         logical_refinement_count = refiner.logical_refinement_count
 

@@ -63,7 +63,19 @@ def test_write_assessment_preserves_aggregate_and_episodes(store: ArtifactStore)
         termination_reason=TerminationReason.STEP_LIMIT,
         failure_summary=None,
         last_observation="last",
-        attempts=[ActionAttempt("before", "[A C]", True, True, "obs", 0.0, False, "", None)],
+        attempts=[
+            ActionAttempt(
+                observation="before",
+                action="[A C]",
+                policy_legal=True,
+                environment_legal=True,
+                resulting_observation="obs",
+                reward=0.0,
+                terminated=False,
+                feedback="",
+                error_phase=None,
+            )
+        ],
     )
     assessment = CandidateAssessment(
         episodes=[

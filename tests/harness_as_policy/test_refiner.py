@@ -66,7 +66,7 @@ def test_langfuse_uses_ids_independent_of_game_random_seed(monkeypatch: pytest.M
     def fake_langfuse(**kwargs: object) -> None:
         client_kwargs.update(kwargs)
 
-    monkeypatch.delenv("PYTEST_CURRENT_TEST")
+    monkeypatch.delenv("PYTEST_CURRENT_TEST", raising=False)
     monkeypatch.setenv("LANGFUSE_ENABLED", "true")
     monkeypatch.setattr(refiner_module, "Langfuse", fake_langfuse)
     monkeypatch.setattr(refiner_module, "CallbackHandler", lambda: sentinel.handler)

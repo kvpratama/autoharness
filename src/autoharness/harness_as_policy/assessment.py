@@ -136,21 +136,39 @@ def build_initial_trajectory(observations: list[tuple[int, str]]) -> str:
     )
 
 
-def _render_attempt(index: int, attempt: ActionAttempt) -> str:
-    return "\n".join(
-        (
-            f"Attempt {index}",
-            _field("Board before action", attempt.observation),
-            _field("Proposed action", attempt.action),
-            f"Policy legality check: {_value(attempt.policy_legal)}",
-            f"Environment legality check: {_value(attempt.environment_legal)}",
-            _field("Feedback", attempt.feedback),
-            _field("Board after action", attempt.resulting_observation),
-            f"Reward: {_value(attempt.reward)}",
-            f"Terminated: {_value(attempt.terminated)}",
-            f"Error phase: {_value(attempt.error_phase)}",
-        )
-    )
+def _render_observation_change(previous: str, current: str) -> str:
+    if current == previous:
+        return "Observation unchanged"
+    if current.startswith(previous):
+        return _field("Observation update", current[len(previous) :])
+    return _field("Observation snapshot", current)
+
+
+def _render_attempt(
+    index: int, attempt: ActionAttempt, current_observation: str
+) -> tuple[str, str]:
+    lines = [f"Attempt {index}"]
+    if attempt.observation != current_observation:
+        lines.append(_render_observation_change(current_observation, attempt.observation))
+        current_observation = attempt.observation
+    if attempt.action is not None:
+        lines.append(_field("Proposed action", attempt.action))
+    if attempt.policy_legal is not None:
+        lines.append(f"Policy legality check: {_value(attempt.policy_legal)}")
+    if attempt.environment_legal is not None:
+        lines.append(f"Environment legality check: {_value(attempt.environment_legal)}")
+    if attempt.feedback:
+        lines.append(_field("Feedback", attempt.feedback))
+    if attempt.resulting_observation is not None:
+        lines.append(_render_observation_change(current_observation, attempt.resulting_observation))
+        current_observation = attempt.resulting_observation
+    if attempt.reward is not None:
+        lines.append(f"Reward: {_value(attempt.reward)}")
+    if attempt.terminated is not None:
+        lines.append(f"Terminated: {_value(attempt.terminated)}")
+    if attempt.error_phase is not None:
+        lines.append(f"Error phase: {_value(attempt.error_phase)}")
+    return "\n".join(lines), current_observation
 
 
 def build_assessment_trajectory(assessment: CandidateAssessment) -> str:
@@ -159,21 +177,20 @@ def build_assessment_trajectory(assessment: CandidateAssessment) -> str:
     for episode_index, episode in enumerate(assessment.episodes, start=1):
         rollout = episode.rollout
         initial = rollout.attempts[0].observation if rollout.attempts else rollout.last_observation
+        current_observation = initial or ""
         lines = [
             f"Episode {episode_index}",
             f"Seed: {episode.seed}",
             _field("Initial board", initial),
         ]
-        lines.extend(
-            _render_attempt(index, attempt)
-            for index, attempt in enumerate(rollout.attempts, start=1)
-        )
-        lines.extend(
-            (
-                f"Rollout termination: {rollout.termination_reason.value}",
-                _field("Rollout failure summary", rollout.failure_summary),
+        for index, attempt in enumerate(rollout.attempts, start=1):
+            rendered_attempt, current_observation = _render_attempt(
+                index, attempt, current_observation
             )
-        )
+            lines.append(rendered_attempt)
+        lines.append(f"Rollout termination: {rollout.termination_reason.value}")
+        if rollout.failure_summary:
+            lines.append(_field("Rollout failure summary", rollout.failure_summary))
         episodes.append("\n\n".join(lines))
     return "\n\n".join(episodes)
 

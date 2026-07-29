@@ -155,6 +155,116 @@ def test_assessment_trajectory_contains_all_episodes_and_attempts_without_trunca
     assert context.count("Attempt 7") == 7
 
 
+def test_assessment_trajectory_renders_cumulative_observations_as_updates() -> None:
+    attempts = [
+        ActionAttempt(
+            observation="initial board",
+            action="first action",
+            policy_legal=True,
+            environment_legal=True,
+            resulting_observation="initial board\nfirst result",
+            reward=0.0,
+            terminated=False,
+            feedback="",
+            error_phase=None,
+        ),
+        ActionAttempt(
+            observation="initial board\nfirst result",
+            action="second action",
+            policy_legal=True,
+            environment_legal=True,
+            resulting_observation="initial board\nfirst result\nsecond result",
+            reward=1.0,
+            terminated=True,
+            feedback="finished",
+            error_phase=None,
+        ),
+    ]
+    assessment = CandidateAssessment(
+        episodes=[
+            EpisodeResult(
+                7,
+                RolloutResult(
+                    [],
+                    1.0,
+                    1.0,
+                    2,
+                    TerminationReason.ENVIRONMENT_TERMINATION,
+                    None,
+                    attempts=attempts,
+                ),
+            )
+        ],
+        heuristic=1.0,
+        terminal_reward=1.0,
+        legal_action_count=2,
+        failure_count=0,
+        termination_counts={TerminationReason.ENVIRONMENT_TERMINATION: 1},
+        representative_episode_index=0,
+        termination_reason=TerminationReason.ENVIRONMENT_TERMINATION,
+        failure_summary=None,
+        last_observation=attempts[-1].resulting_observation,
+    )
+
+    context = build_assessment_trajectory(assessment)
+
+    assert context.count("initial board") == 1
+    assert context.count("first result") == 1
+    assert context.count("second result") == 1
+    assert "Board before action" not in context
+    assert context.count("Observation update:") == 2
+    assert "Feedback:\nfinished" in context
+    assert "Feedback:\n\n" not in context
+    assert "Error phase: not reached" not in context
+
+
+def test_assessment_trajectory_uses_snapshot_for_non_prefix_observation() -> None:
+    attempt = ActionAttempt(
+        observation="before",
+        action="action",
+        policy_legal=None,
+        environment_legal=None,
+        resulting_observation="replacement state",
+        reward=None,
+        terminated=None,
+        feedback="execution failed",
+        error_phase=None,
+    )
+    assessment = CandidateAssessment(
+        episodes=[
+            EpisodeResult(
+                9,
+                RolloutResult(
+                    [],
+                    0.0,
+                    0.0,
+                    0,
+                    TerminationReason.EXECUTION_FAILURE,
+                    "execution failed",
+                    attempts=[attempt],
+                ),
+            )
+        ],
+        heuristic=0.0,
+        terminal_reward=0.0,
+        legal_action_count=0,
+        failure_count=1,
+        termination_counts={TerminationReason.EXECUTION_FAILURE: 1},
+        representative_episode_index=0,
+        termination_reason=TerminationReason.EXECUTION_FAILURE,
+        failure_summary="execution failed",
+        last_observation="replacement state",
+    )
+
+    context = build_assessment_trajectory(assessment)
+
+    assert "Observation snapshot:\nreplacement state" in context
+    assert "Policy legality check" not in context
+    assert "Environment legality check" not in context
+    assert "Reward:" not in context
+    assert "Terminated:" not in context
+
+
 def test_any_legality_disagreement_refines_both_functions() -> None:
     assessment = CandidateAssessor(
         ScriptedEvaluator(

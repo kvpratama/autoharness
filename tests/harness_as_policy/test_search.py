@@ -14,13 +14,13 @@ from autoharness.harness_as_policy.models import (
     Candidate,
     CandidateRankKey,
     Profile,
+    ProviderInvocation,
+    RefinementOutcome,
+    RefinementTrace,
     StepResult,
     TerminationReason,
 )
 from autoharness.harness_as_policy.refiner import (
-    ProviderInvocation,
-    RefinementOutcome,
-    RefinementTrace,
     RefinerProtocol,
     RefinerResult,
 )

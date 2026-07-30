@@ -7,8 +7,7 @@ import os
 import re
 import secrets
 import time
-from dataclasses import dataclass, field
-from enum import StrEnum
+from dataclasses import dataclass
 from typing import Any, Protocol
 
 import anthropic
@@ -22,6 +21,12 @@ from langchain_core.runnables import RunnableConfig
 from langfuse import Langfuse
 from langfuse.langchain import CallbackHandler
 from opentelemetry.sdk.trace.id_generator import IdGenerator
+
+from autoharness.harness_as_policy.models import (
+    ProviderInvocation,
+    RefinementOutcome,
+    RefinementTrace,
+)
 
 
 class _SystemRandomIdGenerator(IdGenerator):
@@ -122,37 +127,6 @@ class RefinerResult:
 
     success: bool
     source: str | None
-    error_details: str | None = None
-
-
-@dataclass
-class ProviderInvocation:
-    """Auditable outcome of one provider invocation."""
-
-    content: object | None = None
-    normalized_text: str | None = None
-    error_type: str | None = None
-    error_message: str | None = None
-
-
-class RefinementOutcome(StrEnum):
-    """Allowed terminal (and initial) states for a RefinementTrace."""
-
-    IN_PROGRESS = "in_progress"
-    SUCCESS = "success"
-    PROVIDER_ERROR = "provider_error"
-    INVALID_RESPONSE = "invalid_response"
-    TRANSPORT_FAILURE = "transport_failure"
-
-
-@dataclass
-class RefinementTrace:
-    """Exact prompt and provider outcomes for one logical refinement."""
-
-    prompt: str
-    invocations: list[ProviderInvocation] = field(default_factory=list)
-    extracted_source: str | None = None
-    outcome: RefinementOutcome = RefinementOutcome.IN_PROGRESS
     error_details: str | None = None
 
 

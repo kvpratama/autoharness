@@ -7,6 +7,37 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 
 
+@dataclass
+class ProviderInvocation:
+    """Auditable outcome of one provider invocation."""
+
+    content: object | None = None
+    normalized_text: str | None = None
+    error_type: str | None = None
+    error_message: str | None = None
+
+
+class RefinementOutcome(StrEnum):
+    """Allowed terminal (and initial) states for a RefinementTrace."""
+
+    IN_PROGRESS = "in_progress"
+    SUCCESS = "success"
+    PROVIDER_ERROR = "provider_error"
+    INVALID_RESPONSE = "invalid_response"
+    TRANSPORT_FAILURE = "transport_failure"
+
+
+@dataclass
+class RefinementTrace:
+    """Exact prompt and provider outcomes for one logical refinement."""
+
+    prompt: str
+    invocations: list[ProviderInvocation] = field(default_factory=list)
+    extracted_source: str | None = None
+    outcome: RefinementOutcome = RefinementOutcome.IN_PROGRESS
+    error_details: str | None = None
+
+
 class TerminationReason(StrEnum):
     ILLEGAL_ACTION = "illegal_action"
     POLICY_REJECTED_ACTION = "policy_rejected_action"

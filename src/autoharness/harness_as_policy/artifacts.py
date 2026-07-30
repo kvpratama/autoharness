@@ -7,8 +7,12 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
-from autoharness.harness_as_policy.models import CandidateAssessment, EpisodeResult, Event
-from autoharness.harness_as_policy.refiner import RefinementTrace
+from autoharness.harness_as_policy.models import (
+    CandidateAssessment,
+    EpisodeResult,
+    Event,
+    RefinementTrace,
+)
 
 
 class ArtifactStore:

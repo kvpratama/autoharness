@@ -13,14 +13,12 @@ from autoharness.harness_as_policy.models import (
     CandidateAssessment,
     EpisodeResult,
     Event,
-    RolloutResult,
-    StepResult,
-    TerminationReason,
-)
-from autoharness.harness_as_policy.refiner import (
     ProviderInvocation,
     RefinementOutcome,
     RefinementTrace,
+    RolloutResult,
+    StepResult,
+    TerminationReason,
 )
 
 

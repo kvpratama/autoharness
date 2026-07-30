@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import threading
 import time
 from typing import Any
 from unittest.mock import sentinel
@@ -96,6 +97,42 @@ def test_langfuse_initializes_once_per_process(monkeypatch: pytest.MonkeyPatch) 
 
     assert handler1 is sentinel.handler
     assert handler2 is sentinel.handler
+    assert init_count == 1
+
+
+def test_langfuse_initializes_once_across_concurrent_calls(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Concurrent handler creation must not race process-wide initialization."""
+    first_initialization_started = threading.Event()
+    release_first_initialization = threading.Event()
+    init_count = 0
+
+    def fake_langfuse(**kwargs: object) -> None:
+        nonlocal init_count
+        init_count += 1
+        if init_count == 1:
+            first_initialization_started.set()
+            assert release_first_initialization.wait(timeout=1)
+
+    monkeypatch.delenv("PYTEST_CURRENT_TEST", raising=False)
+    monkeypatch.setenv("LANGFUSE_ENABLED", "true")
+    monkeypatch.setattr(refiner_module, "_langfuse_initialized", False)
+    monkeypatch.setattr(refiner_module, "Langfuse", fake_langfuse)
+    monkeypatch.setattr(refiner_module, "CallbackHandler", lambda: sentinel.handler)
+
+    first = threading.Thread(target=refiner_module._get_langfuse_handler)
+    second = threading.Thread(target=refiner_module._get_langfuse_handler)
+    first.start()
+    assert first_initialization_started.wait(timeout=1)
+    second.start()
+    second.join(timeout=0.1)
+    release_first_initialization.set()
+    first.join(timeout=1)
+    second.join(timeout=1)
+
+    assert not first.is_alive()
+    assert not second.is_alive()
     assert init_count == 1
 
 

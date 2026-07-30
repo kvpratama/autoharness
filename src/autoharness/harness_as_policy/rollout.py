@@ -81,15 +81,15 @@ class RolloutEvaluator:
             except Exception as error:
                 failure = f"Action provider failed: {error}"
                 return self._record_failure(
-                    steps,
-                    attempt_records,
-                    attempts,
-                    TerminationReason.EXECUTION_FAILURE,
-                    observation,
-                    None,
-                    None,
-                    failure,
-                    AttemptErrorPhase.POLICY_EXECUTION,
+                    steps=steps,
+                    attempt_records=attempt_records,
+                    attempts=attempts,
+                    reason=TerminationReason.EXECUTION_FAILURE,
+                    observation=observation,
+                    action=None,
+                    policy_legal=None,
+                    feedback=failure,
+                    error_phase=AttemptErrorPhase.POLICY_EXECUTION,
                 )
             if not outcome.success or outcome.output is None:
                 reason = (
@@ -98,15 +98,15 @@ class RolloutEvaluator:
                     else TerminationReason.EXECUTION_FAILURE
                 )
                 return self._record_failure(
-                    steps,
-                    attempt_records,
-                    attempts,
-                    reason,
-                    observation,
-                    None,
-                    None,
-                    outcome.error_details or "",
-                    AttemptErrorPhase.POLICY_EXECUTION,
+                    steps=steps,
+                    attempt_records=attempt_records,
+                    attempts=attempts,
+                    reason=reason,
+                    observation=observation,
+                    action=None,
+                    policy_legal=None,
+                    feedback=outcome.error_details or "",
+                    error_phase=AttemptErrorPhase.POLICY_EXECUTION,
                     failure_summary=outcome.error_details,
                 )
             action = outcome.output
@@ -117,30 +117,30 @@ class RolloutEvaluator:
                     f"(checker={outcome.is_legal_action!r})"
                 )
                 return self._record_failure(
-                    steps,
-                    attempt_records,
-                    attempts,
-                    TerminationReason.POLICY_REJECTED_ACTION,
-                    observation,
-                    action,
-                    False,
-                    failure,
-                    AttemptErrorPhase.POLICY_LEGALITY,
+                    steps=steps,
+                    attempt_records=attempt_records,
+                    attempts=attempts,
+                    reason=TerminationReason.POLICY_REJECTED_ACTION,
+                    observation=observation,
+                    action=action,
+                    policy_legal=False,
+                    feedback=failure,
+                    error_phase=AttemptErrorPhase.POLICY_LEGALITY,
                 )
             try:
                 step = self._adapter.step(action)
             except Exception as error:
                 failure = f"Environment step failed: {error}"
                 return self._record_failure(
-                    steps,
-                    attempt_records,
-                    attempts,
-                    TerminationReason.EXECUTION_FAILURE,
-                    observation,
-                    action,
-                    outcome.is_legal_action if checks_legality else None,
-                    failure,
-                    AttemptErrorPhase.ENVIRONMENT_STEP,
+                    steps=steps,
+                    attempt_records=attempt_records,
+                    attempts=attempts,
+                    reason=TerminationReason.EXECUTION_FAILURE,
+                    observation=observation,
+                    action=action,
+                    policy_legal=outcome.is_legal_action if checks_legality else None,
+                    feedback=failure,
+                    error_phase=AttemptErrorPhase.ENVIRONMENT_STEP,
                 )
             steps.append(step)
             attempt_records.append(
@@ -182,6 +182,7 @@ class RolloutEvaluator:
 
     def _record_failure(
         self,
+        *,
         steps: list[StepResult],
         attempt_records: list[ActionAttempt],
         attempts: int,

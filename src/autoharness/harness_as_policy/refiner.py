@@ -6,6 +6,7 @@ import ast
 import os
 import re
 import secrets
+import threading
 import time
 from dataclasses import dataclass
 from typing import Any, Protocol
@@ -46,6 +47,7 @@ class _SystemRandomIdGenerator(IdGenerator):
 
 
 _LANGFUSE_ID_GENERATOR = _SystemRandomIdGenerator()
+_langfuse_init_lock = threading.Lock()
 _langfuse_initialized: bool = False
 
 
@@ -67,9 +69,10 @@ def _get_langfuse_handler() -> CallbackHandler | None:
         return None
     # Explicitly initialize the Langfuse client once per process so the OTel pipeline
     # is set up before CallbackHandler calls get_client() internally.
-    if not _langfuse_initialized:
-        Langfuse(id_generator=_LANGFUSE_ID_GENERATOR)
-        _langfuse_initialized = True
+    with _langfuse_init_lock:
+        if not _langfuse_initialized:
+            Langfuse(id_generator=_LANGFUSE_ID_GENERATOR)
+            _langfuse_initialized = True
     return CallbackHandler()
 
 

@@ -189,6 +189,17 @@ def test_action_attempt_is_immutable() -> None:
 def test_action_attempt_requires_keyword_arguments() -> None:
     parameters = signature(ActionAttempt).parameters.values()
 
+    assert {parameter.name for parameter in parameters} == {
+        "observation",
+        "action",
+        "policy_legal",
+        "environment_legal",
+        "resulting_observation",
+        "reward",
+        "terminated",
+        "feedback",
+        "error_phase",
+    }
     assert all(parameter.kind is Parameter.KEYWORD_ONLY for parameter in parameters)
 
 

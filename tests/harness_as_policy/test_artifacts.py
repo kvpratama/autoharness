@@ -17,7 +17,11 @@ from autoharness.harness_as_policy.models import (
     StepResult,
     TerminationReason,
 )
-from autoharness.harness_as_policy.refiner import ProviderInvocation, RefinementTrace
+from autoharness.harness_as_policy.refiner import (
+    ProviderInvocation,
+    RefinementOutcome,
+    RefinementTrace,
+)
 
 
 @pytest.fixture
@@ -139,7 +143,7 @@ def test_write_refinement_preserves_prompt_provider_attempts_and_source(
             ),
         ],
         extracted_source="def propose_action(): pass",
-        outcome="success",
+        outcome=RefinementOutcome.SUCCESS,
     )
 
     store.write_refinement(1, "000", True, trace)

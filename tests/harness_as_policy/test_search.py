@@ -19,6 +19,7 @@ from autoharness.harness_as_policy.models import (
 )
 from autoharness.harness_as_policy.refiner import (
     ProviderInvocation,
+    RefinementOutcome,
     RefinementTrace,
     RefinerProtocol,
     RefinerResult,
@@ -688,13 +689,15 @@ class FakeRefiner:
         self._call_count += 1
         self.scopes.append(refine_legal_action)
         self.trajectories.append(trajectory)
-        self._last_trace = RefinementTrace(prompt=f"prompt:{trajectory}", outcome="success")
+        self._last_trace = RefinementTrace(
+            prompt=f"prompt:{trajectory}", outcome=RefinementOutcome.SUCCESS
+        )
         if self._responses:
             resp = self._responses.pop(0)
             if resp:
                 self._last_trace.extracted_source = resp
                 return RefinerResult(success=True, source=resp)
-        self._last_trace.outcome = "invalid_response"
+        self._last_trace.outcome = RefinementOutcome.INVALID_RESPONSE
         return RefinerResult(success=False, source=None)
 
 
@@ -872,7 +875,7 @@ def test_provider_error_trace_is_persisted_before_propagation(tmp_path: Path) ->
                 invocations=[
                     ProviderInvocation(error_type="ValueError", error_message="provider failed")
                 ],
-                outcome="provider_error",
+                outcome=RefinementOutcome.PROVIDER_ERROR,
                 error_details="provider failed",
             )
             raise ValueError("provider failed")
@@ -932,7 +935,7 @@ def test_refinement_persistence_failure_does_not_replace_refiner_error(
         raise ValueError("provider failed")
 
     refiner = FakeRefiner([])
-    refiner._last_trace = RefinementTrace(prompt="prompt", outcome="provider_error")
+    refiner._last_trace = RefinementTrace(prompt="prompt", outcome=RefinementOutcome.PROVIDER_ERROR)
     monkeypatch.setattr(refiner, "refine", fail_refine)
     monkeypatch.setattr(
         "autoharness.harness_as_policy.search.ArtifactStore.write_refinement",

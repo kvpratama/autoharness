@@ -6,7 +6,9 @@ import ast
 import os
 import re
 import secrets
+import time
 from dataclasses import dataclass, field
+from enum import StrEnum
 from typing import Any, Protocol
 
 import anthropic
@@ -133,6 +135,16 @@ class ProviderInvocation:
     error_message: str | None = None
 
 
+class RefinementOutcome(StrEnum):
+    """Allowed terminal (and initial) states for a RefinementTrace."""
+
+    IN_PROGRESS = "in_progress"
+    SUCCESS = "success"
+    PROVIDER_ERROR = "provider_error"
+    INVALID_RESPONSE = "invalid_response"
+    TRANSPORT_FAILURE = "transport_failure"
+
+
 @dataclass
 class RefinementTrace:
     """Exact prompt and provider outcomes for one logical refinement."""
@@ -140,7 +152,7 @@ class RefinementTrace:
     prompt: str
     invocations: list[ProviderInvocation] = field(default_factory=list)
     extracted_source: str | None = None
-    outcome: str = "in_progress"
+    outcome: RefinementOutcome = RefinementOutcome.IN_PROGRESS
     error_details: str | None = None
 
 
@@ -164,7 +176,6 @@ REFINER_SYSTEM_PROMPT = (
     "\n"
     "You may define private helper functions and internal data structures.\n"
     "Do NOT use filesystem, network, subprocess, or dynamic-code operations.\n"
-    "\nAutoHarness-specific constraints:\n"
     "\n"
     "Parent source:\n"
     "```python\n"
@@ -388,8 +399,10 @@ class Refiner:
                 )
                 if _is_transient_error(e):
                     last_error = str(e)
+                    if _ == 0:
+                        time.sleep(1.0)
                     continue
-                trace.outcome = "provider_error"
+                trace.outcome = RefinementOutcome.PROVIDER_ERROR
                 trace.error_details = str(e)
                 raise
             content = _normalize_content(response)
@@ -399,16 +412,16 @@ class Refiner:
             source = _extract_source(content)
             trace.extracted_source = source
             if source and _has_policy_contract(source):
-                trace.outcome = "success"
+                trace.outcome = RefinementOutcome.SUCCESS
                 return RefinerResult(success=True, source=source)
-            trace.outcome = "invalid_response"
+            trace.outcome = RefinementOutcome.INVALID_RESPONSE
             trace.error_details = "Model response did not contain both required policy functions"
             return RefinerResult(
                 success=False,
                 source=None,
                 error_details="Model response did not contain both required policy functions",
             )
-        trace.outcome = "transport_failure"
+        trace.outcome = RefinementOutcome.TRANSPORT_FAILURE
         trace.error_details = f"Model transport failure after 2 attempts: {last_error}"
         return RefinerResult(
             success=False,

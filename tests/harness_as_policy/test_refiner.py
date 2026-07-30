@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 from typing import Any
 from unittest.mock import sentinel
 
@@ -316,8 +317,10 @@ def test_refiner_model_call_count() -> None:
     assert refiner.logical_refinement_count == 1
 
 
-def test_refiner_retry_on_transport_error() -> None:
+def test_refiner_retry_on_transport_error(monkeypatch: pytest.MonkeyPatch) -> None:
     """Refiner retries once on transport failure."""
+    sleep_calls: list[float] = []
+    monkeypatch.setattr(time, "sleep", sleep_calls.append)
 
     class RetryModel(BaseChatModel):
         def __init__(self) -> None:
@@ -363,6 +366,7 @@ def test_refiner_retry_on_transport_error() -> None:
     assert refiner.last_trace is not None
     assert refiner.last_trace.invocations[0].error_type == "ConnectionError"
     assert refiner.last_trace.invocations[1].normalized_text == COMPLETE_RESPONSE
+    assert sleep_calls == [1.0]
 
 
 def test_refiner_double_retry_failure() -> None:

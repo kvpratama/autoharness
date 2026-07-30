@@ -259,14 +259,15 @@ def test_report_rejects_results_that_do_not_match_protocol(
         EvaluationReport.create("generated-policy", protocol, results)
 
 
-def test_evaluate_policy_on_env_preserves_step_limit_reward() -> None:
+def test_evaluate_policy_on_env_ignores_nonterminal_step_limit_reward() -> None:
     adapter = FakeAdapter(
         max_steps=1,
         step_result=StepResult("next", "action", True, 0.6, False, ""),
     )
+
     result = evaluate_policy_on_env(adapter, FakeExecutor(), "source", seed=123)
 
-    assert result.reward == 0.6
+    assert result.reward == 0.0
     assert result.termination_reason == TerminationReason.STEP_LIMIT
     assert result.action_attempt_count == 1
 

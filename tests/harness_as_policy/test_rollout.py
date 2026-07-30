@@ -291,8 +291,8 @@ def test_rollout_illegal_action_returns_zero() -> None:
     assert result.termination_reason == TerminationReason.LEGALITY_DISAGREEMENT
 
 
-def test_rollout_step_limit() -> None:
-    """Reaching adapter step limit uses last-step progress reward for heuristic."""
+def test_rollout_step_limit_ignores_nonterminal_reward() -> None:
+    """Outer step-limit scoring cannot promote nonterminal progress to reward."""
     adapter = FakeAdapter(
         step_results=[
             StepResult(
@@ -323,10 +323,11 @@ def test_rollout_step_limit() -> None:
     )
     adapter.max_steps = 3
     executor = FakeExecutor(step_results=[("[A C]", True), ("[C B]", True), ("[A C]", True)])
-    evaluator = RolloutEvaluator(adapter=adapter, executor=executor)
-    result = evaluator.evaluate(source="dummy source")
-    assert result.heuristic == 0.8
-    assert result.terminal_reward == 0.6
+
+    result = RolloutEvaluator(adapter=adapter, executor=executor).evaluate(source="dummy source")
+
+    assert result.heuristic == 0.5
+    assert result.terminal_reward == 0.0
     assert result.termination_reason == TerminationReason.STEP_LIMIT
 
 

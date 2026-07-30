@@ -7,6 +7,37 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 
 
+@dataclass
+class ProviderInvocation:
+    """Auditable outcome of one provider invocation."""
+
+    content: object | None = None
+    normalized_text: str | None = None
+    error_type: str | None = None
+    error_message: str | None = None
+
+
+class RefinementOutcome(StrEnum):
+    """Allowed terminal (and initial) states for a RefinementTrace."""
+
+    IN_PROGRESS = "in_progress"
+    SUCCESS = "success"
+    PROVIDER_ERROR = "provider_error"
+    INVALID_RESPONSE = "invalid_response"
+    TRANSPORT_FAILURE = "transport_failure"
+
+
+@dataclass
+class RefinementTrace:
+    """Exact prompt and provider outcomes for one logical refinement."""
+
+    prompt: str
+    invocations: list[ProviderInvocation] = field(default_factory=list)
+    extracted_source: str | None = None
+    outcome: RefinementOutcome = RefinementOutcome.IN_PROGRESS
+    error_details: str | None = None
+
+
 class TerminationReason(StrEnum):
     ILLEGAL_ACTION = "illegal_action"
     POLICY_REJECTED_ACTION = "policy_rejected_action"
@@ -43,6 +74,29 @@ class StepResult:
     feedback: str
 
 
+class AttemptErrorPhase(StrEnum):
+    """Phase in which an action attempt failed."""
+
+    POLICY_EXECUTION = "policy_execution"
+    POLICY_LEGALITY = "policy_legality"
+    ENVIRONMENT_STEP = "environment_step"
+
+
+@dataclass(frozen=True, kw_only=True)
+class ActionAttempt:
+    """One policy decision with its pre-action board and resulting outcome."""
+
+    observation: str
+    action: str | None
+    policy_legal: bool | None
+    environment_legal: bool | None
+    resulting_observation: str | None
+    reward: float | None
+    terminated: bool | None
+    feedback: str
+    error_phase: AttemptErrorPhase | None
+
+
 @dataclass
 class RolloutResult:
     """Result of one complete rollout."""
@@ -55,6 +109,7 @@ class RolloutResult:
     failure_summary: str | None
     last_observation: str | None = None
     action_attempt_count: int = 0
+    attempts: list[ActionAttempt] = field(default_factory=list)
 
 
 @dataclass

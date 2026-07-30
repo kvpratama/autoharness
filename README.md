@@ -172,10 +172,18 @@ artifacts/<run-id>/
 ├── candidates/
 ├── config.json
 ├── events.jsonl
+├── refinements/
 ├── rollouts/
 ├── synthesis-summary.json
 └── tree.json
 ```
+
+Each `rollouts/<candidate-id>.json` file stores aggregate results, environment steps, and structured
+policy action attempts with the board shown before each action. Each
+`refinements/<iteration>.json` file stores the exact rendered prompt, ordered provider attempts, raw
+returned content, normalized text, extracted source, and final outcome. Refiner prompts contain the
+complete trajectories from every configured training rollout without sampling or truncation; the
+first prompt contains every seeded initial board without executing the root policy.
 
 Running evaluation commands (`autoharness evaluate` or `autoharness evaluate-baseline`) creates evaluation artifacts under `artifacts/<run-id>/evaluation/`:
 
@@ -186,9 +194,10 @@ artifacts/<run-id>/evaluation/
 └── llm-baseline.json  # optional
 ```
 
-`best.py` is the best generated policy for the run. Rollout files use schema version 2 and contain
-aggregate assessment fields plus every seeded episode (including the deterministic representative).
-Candidate source files, events, and the candidate tree are kept for debugging and analysis.
+`best.py` is the best generated policy for the run. Rollout files use schema version 3 and contain
+aggregate assessment fields plus every seeded episode, environment step, and action attempt.
+Candidate source files, events, refinement audits, and the candidate tree are kept for debugging and
+analysis.
 
 ## Development
 

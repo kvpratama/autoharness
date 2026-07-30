@@ -106,12 +106,15 @@ def test_langfuse_initializes_once_across_concurrent_calls(
     """Concurrent handler creation must not race process-wide initialization."""
     first_initialization_started = threading.Event()
     release_first_initialization = threading.Event()
+    init_count_lock = threading.Lock()
     init_count = 0
 
     def fake_langfuse(**kwargs: object) -> None:
         nonlocal init_count
-        init_count += 1
-        if init_count == 1:
+        with init_count_lock:
+            init_count += 1
+            current_init_count = init_count
+        if current_init_count == 1:
             first_initialization_started.set()
             assert release_first_initialization.wait(timeout=1)
 
@@ -127,6 +130,7 @@ def test_langfuse_initializes_once_across_concurrent_calls(
     assert first_initialization_started.wait(timeout=1)
     second.start()
     second.join(timeout=0.1)
+    assert second.is_alive()
     release_first_initialization.set()
     first.join(timeout=1)
     second.join(timeout=1)

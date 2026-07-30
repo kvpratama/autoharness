@@ -69,11 +69,34 @@ def test_langfuse_uses_ids_independent_of_game_random_seed(monkeypatch: pytest.M
 
     monkeypatch.delenv("PYTEST_CURRENT_TEST", raising=False)
     monkeypatch.setenv("LANGFUSE_ENABLED", "true")
+    monkeypatch.setattr(refiner_module, "_langfuse_initialized", False)
     monkeypatch.setattr(refiner_module, "Langfuse", fake_langfuse)
     monkeypatch.setattr(refiner_module, "CallbackHandler", lambda: sentinel.handler)
 
     assert refiner_module._get_langfuse_handler() is sentinel.handler
     assert "id_generator" in client_kwargs
+
+
+def test_langfuse_initializes_once_per_process(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Langfuse global initialization must run at most once per process."""
+    init_count = 0
+
+    def fake_langfuse(**kwargs: object) -> None:
+        nonlocal init_count
+        init_count += 1
+
+    monkeypatch.delenv("PYTEST_CURRENT_TEST", raising=False)
+    monkeypatch.setenv("LANGFUSE_ENABLED", "true")
+    monkeypatch.setattr(refiner_module, "_langfuse_initialized", False)
+    monkeypatch.setattr(refiner_module, "Langfuse", fake_langfuse)
+    monkeypatch.setattr(refiner_module, "CallbackHandler", lambda: sentinel.handler)
+
+    handler1 = refiner_module._get_langfuse_handler()
+    handler2 = refiner_module._get_langfuse_handler()
+
+    assert handler1 is sentinel.handler
+    assert handler2 is sentinel.handler
+    assert init_count == 1
 
 
 def test_refiner_reuses_one_langfuse_handler(monkeypatch: pytest.MonkeyPatch) -> None:

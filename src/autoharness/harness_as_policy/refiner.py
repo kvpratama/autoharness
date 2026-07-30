@@ -46,25 +46,30 @@ class _SystemRandomIdGenerator(IdGenerator):
 
 
 _LANGFUSE_ID_GENERATOR = _SystemRandomIdGenerator()
+_langfuse_initialized: bool = False
 
 
 def _get_langfuse_handler() -> CallbackHandler | None:
-    """Initialize Langfuse and return a handler for one refiner instance.
+    """Initialize Langfuse once per process and return a handler for one refiner instance.
 
     Langfuse v4 uses an OpenTelemetry-based architecture where the OTel
     TracerProvider/exporter is registered by the ``Langfuse()`` constructor.
     We must call ``Langfuse()`` explicitly *before* instantiating
     ``CallbackHandler`` so the process-wide client uses IDs independent of the
-    game-seeded global random state. ``Refiner`` owns and reuses the returned
-    handler for all of its model calls.
+    game-seeded global random state. Process-wide initialization runs at most
+    once per process. ``Refiner`` owns and reuses the returned handler for all
+    of its model calls.
     """
+    global _langfuse_initialized
     if "PYTEST_CURRENT_TEST" in os.environ:
         return None
     if os.environ.get("LANGFUSE_ENABLED", "").lower() not in ("1", "true", "yes"):
         return None
-    # Explicitly initialize the Langfuse client so the OTel pipeline is set up
-    # before CallbackHandler calls get_client() internally.
-    Langfuse(id_generator=_LANGFUSE_ID_GENERATOR)
+    # Explicitly initialize the Langfuse client once per process so the OTel pipeline
+    # is set up before CallbackHandler calls get_client() internally.
+    if not _langfuse_initialized:
+        Langfuse(id_generator=_LANGFUSE_ID_GENERATOR)
+        _langfuse_initialized = True
     return CallbackHandler()
 
 

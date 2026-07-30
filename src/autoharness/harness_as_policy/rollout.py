@@ -145,15 +145,15 @@ class RolloutEvaluator:
             steps.append(step)
             attempt_records.append(
                 ActionAttempt(
-                    observation,
-                    action,
-                    outcome.is_legal_action if checks_legality else None,
-                    step.is_legal,
-                    step.observation,
-                    step.reward,
-                    step.terminated,
-                    step.feedback,
-                    None if step.is_legal else AttemptErrorPhase.ENVIRONMENT_STEP,
+                    observation=observation,
+                    action=action,
+                    policy_legal=outcome.is_legal_action if checks_legality else None,
+                    environment_legal=step.is_legal,
+                    resulting_observation=step.observation,
+                    reward=step.reward,
+                    terminated=step.terminated,
+                    feedback=step.feedback,
+                    error_phase=(None if step.is_legal else AttemptErrorPhase.ENVIRONMENT_STEP),
                 )
             )
             if not step.is_legal:

@@ -104,8 +104,28 @@ def test_rollout_records_complete_successful_attempt_sequence() -> None:
     result = RolloutEvaluator(adapter, executor).evaluate("source", seed=9)
 
     assert result.attempts == [
-        ActionAttempt("initial observation", "[A C]", True, True, "board 1", 0.0, False, "", None),
-        ActionAttempt("board 1", "[C B]", True, True, "board 2", 1.0, True, "won", None),
+        ActionAttempt(
+            observation="initial observation",
+            action="[A C]",
+            policy_legal=True,
+            environment_legal=True,
+            resulting_observation="board 1",
+            reward=0.0,
+            terminated=False,
+            feedback="",
+            error_phase=None,
+        ),
+        ActionAttempt(
+            observation="board 1",
+            action="[C B]",
+            policy_legal=True,
+            environment_legal=True,
+            resulting_observation="board 2",
+            reward=1.0,
+            terminated=True,
+            feedback="won",
+            error_phase=None,
+        ),
     ]
 
 
@@ -125,15 +145,15 @@ def test_execution_failure_records_board_and_error_phase() -> None:
 
     assert result.attempts == [
         ActionAttempt(
-            "initial observation",
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            "fail",
-            AttemptErrorPhase.POLICY_EXECUTION,
+            observation="initial observation",
+            action=None,
+            policy_legal=None,
+            environment_legal=None,
+            resulting_observation=None,
+            reward=None,
+            terminated=None,
+            feedback="fail",
+            error_phase=AttemptErrorPhase.POLICY_EXECUTION,
         )
     ]
 
@@ -152,15 +172,15 @@ def test_contract_failure_records_board_and_error_phase() -> None:
     assert result.failure_summary == "propose_action not found"
     assert result.attempts == [
         ActionAttempt(
-            "initial observation",
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            "propose_action not found",
-            AttemptErrorPhase.POLICY_EXECUTION,
+            observation="initial observation",
+            action=None,
+            policy_legal=None,
+            environment_legal=None,
+            resulting_observation=None,
+            reward=None,
+            terminated=None,
+            feedback="propose_action not found",
+            error_phase=AttemptErrorPhase.POLICY_EXECUTION,
         )
     ]
 
@@ -193,15 +213,15 @@ def test_environment_exception_records_action_and_pre_action_board() -> None:
     result = RolloutEvaluator(adapter, FakeExecutor([("[A C]", True)])).evaluate("source")
 
     assert result.attempts[0] == ActionAttempt(
-        "initial observation",
-        "[A C]",
-        True,
-        None,
-        None,
-        None,
-        None,
-        "Environment step failed: step exploded",
-        AttemptErrorPhase.ENVIRONMENT_STEP,
+        observation="initial observation",
+        action="[A C]",
+        policy_legal=True,
+        environment_legal=None,
+        resulting_observation=None,
+        reward=None,
+        terminated=None,
+        feedback="Environment step failed: step exploded",
+        error_phase=AttemptErrorPhase.ENVIRONMENT_STEP,
     )
 
 

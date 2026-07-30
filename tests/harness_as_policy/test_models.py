@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import FrozenInstanceError
+from inspect import Parameter, signature
 
 import pytest
 
@@ -183,6 +184,12 @@ def test_action_attempt_is_immutable() -> None:
         setattr(attempt, attribute, "[A B]")
 
     assert AttemptErrorPhase.POLICY_EXECUTION.value == "policy_execution"
+
+
+def test_action_attempt_requires_keyword_arguments() -> None:
+    parameters = signature(ActionAttempt).parameters.values()
+
+    assert all(parameter.kind is Parameter.KEYWORD_ONLY for parameter in parameters)
 
 
 def test_step_result_fields() -> None:

@@ -82,7 +82,7 @@ class AttemptErrorPhase(StrEnum):
     ENVIRONMENT_STEP = "environment_step"
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, kw_only=True)
 class ActionAttempt:
     """One policy decision with its pre-action board and resulting outcome."""
 

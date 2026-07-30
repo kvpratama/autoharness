@@ -18,7 +18,7 @@ from autoharness.harness_as_policy.rollout import RolloutEvaluator
 class FakeExecutor:
     """Fake executor that returns configured results."""
 
-    step_results: list[tuple[str, bool] | None] | None = None
+    step_results: list[tuple[str, bool] | ExecutionResult | None] | None = None
 
     def execute(self, source: str, observation: str) -> ExecutionResult:
         if not self.step_results:
@@ -38,6 +38,8 @@ class FakeExecutor:
                 failure_type="execution_failure",
                 error_details="fail",
             )
+        if isinstance(result, ExecutionResult):
+            return result
         return ExecutionResult(
             success=True,
             output=result[0],
@@ -131,6 +133,33 @@ def test_execution_failure_records_board_and_error_phase() -> None:
             None,
             None,
             "fail",
+            AttemptErrorPhase.POLICY_EXECUTION,
+        )
+    ]
+
+
+def test_contract_failure_records_board_and_error_phase() -> None:
+    contract_err = ExecutionResult(
+        success=False,
+        output=None,
+        latency=0.0,
+        failure_type="contract_failure",
+        error_details="propose_action not found",
+    )
+    result = RolloutEvaluator(FakeAdapter(), FakeExecutor([contract_err])).evaluate("source")
+
+    assert result.termination_reason == TerminationReason.CONTRACT_FAILURE
+    assert result.failure_summary == "propose_action not found"
+    assert result.attempts == [
+        ActionAttempt(
+            "initial observation",
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            "propose_action not found",
             AttemptErrorPhase.POLICY_EXECUTION,
         )
     ]

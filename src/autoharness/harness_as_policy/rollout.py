@@ -80,26 +80,16 @@ class RolloutEvaluator:
                 outcome = provider(observation)
             except Exception as error:
                 failure = f"Action provider failed: {error}"
-                attempt_records.append(
-                    ActionAttempt(
-                        observation,
-                        None,
-                        None,
-                        None,
-                        None,
-                        None,
-                        None,
-                        failure,
-                        AttemptErrorPhase.POLICY_EXECUTION,
-                    )
-                )
-                return self._result(
+                return self._record_failure(
                     steps,
                     attempt_records,
                     attempts,
                     TerminationReason.EXECUTION_FAILURE,
-                    failure,
                     observation,
+                    None,
+                    None,
+                    failure,
+                    AttemptErrorPhase.POLICY_EXECUTION,
                 )
             if not outcome.success or outcome.output is None:
                 reason = (
@@ -107,21 +97,17 @@ class RolloutEvaluator:
                     if outcome.failure_type == "contract_failure"
                     else TerminationReason.EXECUTION_FAILURE
                 )
-                attempt_records.append(
-                    ActionAttempt(
-                        observation,
-                        None,
-                        None,
-                        None,
-                        None,
-                        None,
-                        None,
-                        outcome.error_details or "",
-                        AttemptErrorPhase.POLICY_EXECUTION,
-                    )
-                )
-                return self._result(
-                    steps, attempt_records, attempts, reason, outcome.error_details, observation
+                return self._record_failure(
+                    steps,
+                    attempt_records,
+                    attempts,
+                    reason,
+                    observation,
+                    None,
+                    None,
+                    outcome.error_details or "",
+                    AttemptErrorPhase.POLICY_EXECUTION,
+                    failure_summary=outcome.error_details,
                 )
             action = outcome.output
             attempts += 1
@@ -130,51 +116,31 @@ class RolloutEvaluator:
                     f"Policy legality checker rejected action {action!r} "
                     f"(checker={outcome.is_legal_action!r})"
                 )
-                attempt_records.append(
-                    ActionAttempt(
-                        observation,
-                        action,
-                        False,
-                        None,
-                        None,
-                        None,
-                        None,
-                        failure,
-                        AttemptErrorPhase.POLICY_LEGALITY,
-                    )
-                )
-                return self._result(
+                return self._record_failure(
                     steps,
                     attempt_records,
                     attempts,
                     TerminationReason.POLICY_REJECTED_ACTION,
-                    failure,
                     observation,
+                    action,
+                    False,
+                    failure,
+                    AttemptErrorPhase.POLICY_LEGALITY,
                 )
             try:
                 step = self._adapter.step(action)
             except Exception as error:
                 failure = f"Environment step failed: {error}"
-                attempt_records.append(
-                    ActionAttempt(
-                        observation,
-                        action,
-                        outcome.is_legal_action if checks_legality else None,
-                        None,
-                        None,
-                        None,
-                        None,
-                        failure,
-                        AttemptErrorPhase.ENVIRONMENT_STEP,
-                    )
-                )
-                return self._result(
+                return self._record_failure(
                     steps,
                     attempt_records,
                     attempts,
                     TerminationReason.EXECUTION_FAILURE,
-                    failure,
                     observation,
+                    action,
+                    outcome.is_legal_action if checks_legality else None,
+                    failure,
+                    AttemptErrorPhase.ENVIRONMENT_STEP,
                 )
             steps.append(step)
             attempt_records.append(
@@ -213,6 +179,41 @@ class RolloutEvaluator:
                 )
             observation = step.observation
         return self._result(steps, attempt_records, attempts, TerminationReason.STEP_LIMIT, None)
+
+    def _record_failure(
+        self,
+        steps: list[StepResult],
+        attempt_records: list[ActionAttempt],
+        attempts: int,
+        reason: TerminationReason,
+        observation: str,
+        action: str | None,
+        policy_legal: bool | None,
+        feedback: str,
+        error_phase: AttemptErrorPhase,
+        failure_summary: str | None = None,
+    ) -> RolloutResult:
+        attempt_records.append(
+            ActionAttempt(
+                observation=observation,
+                action=action,
+                policy_legal=policy_legal,
+                environment_legal=None,
+                resulting_observation=None,
+                reward=None,
+                terminated=None,
+                feedback=feedback,
+                error_phase=error_phase,
+            )
+        )
+        return self._result(
+            steps,
+            attempt_records,
+            attempts,
+            reason,
+            failure_summary if failure_summary is not None else feedback,
+            observation,
+        )
 
     @staticmethod
     def _result(

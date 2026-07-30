@@ -137,6 +137,14 @@ def build_initial_trajectory(observations: list[tuple[int, str]]) -> str:
 
 
 def _render_observation_change(previous: str, current: str) -> str:
+    """Render a diff between two consecutive observations for the refiner prompt.
+
+    If ``current`` is a strict prefix extension of ``previous`` (i.e. ``current``
+    starts with ``previous``), only the newly appended text is emitted as an
+    incremental *observation update*.  Otherwise the full ``current`` text is emitted
+    as an *observation snapshot*.  Returns the string ``"Observation unchanged"`` when
+    both values are identical.
+    """
     if current == previous:
         return "Observation unchanged"
     if current.startswith(previous):

@@ -61,6 +61,13 @@ def test_evaluation_protocol_prefix_rejects_invalid_count(episode_count: int) ->
         protocol.prefix(episode_count)
 
 
+def test_evaluation_protocol_prefix_rejects_count_above_current_length() -> None:
+    shortened = EvaluationProtocol.create("Exact-v0", 42, [1, 2]).prefix(5)
+
+    with pytest.raises(ValueError, match="between 1 and 5"):
+        shortened.prefix(10)
+
+
 def test_protocol_is_reproducible_disjoint_and_round_trips() -> None:
     training = generate_episode_seeds(17, 5)
     protocol = EvaluationProtocol.create("Exact-v0", 17, training)
@@ -238,6 +245,26 @@ def test_report_aggregates_mean_reward_and_action_weighted_legality() -> None:
     assert report.aggregate.legal_action_count == 40
     assert report.aggregate.action_attempt_count == 60
     assert report.aggregate.legal_action_rate == pytest.approx(2 / 3)
+
+
+def test_baseline_report_serializes_model_and_selected_protocol() -> None:
+    protocol = EvaluationProtocol("Exact-v0", tuple(range(5)), ())
+    report = EvaluationReport.create(
+        "llm-baseline",
+        protocol,
+        [_result(seed, legal=1, attempts=1) for seed in range(5)],
+        model_id="openai:gpt-5.2-high",
+    )
+
+    data = report.to_dict()
+
+    assert data["model_id"] == "openai:gpt-5.2-high"
+    assert data["protocol"] == {
+        "name": "paper-1p",
+        "env_id": "Exact-v0",
+        "episode_count": 5,
+        "episode_seeds": list(range(5)),
+    }
 
 
 def test_report_uses_no_legality_denominator_for_actionless_failures() -> None:

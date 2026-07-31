@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import re
 import time
 from dataclasses import dataclass
 
@@ -42,18 +41,19 @@ LIVE_PROMPT = (
     " Example of a correct response format: <move>[Your chosen move]</move>\n"
 )
 
-_MOVE_PATTERN = re.compile(r"<move>(.*?)</move>", re.DOTALL)
-
 
 def _extract_move(content: str) -> str:
-    matches = list(_MOVE_PATTERN.finditer(content))
-    if len(matches) != 1:
+    if content.count("<move>") != 1 or content.count("</move>") != 1:
         raise ValueError("Model response must contain exactly one <move>...</move> payload")
-    match = matches[0]
-    action = match.group(1).strip()
+    opening_index = content.index("<move>")
+    payload_start = opening_index + len("<move>")
+    closing_index = content.index("</move>")
+    if opening_index > closing_index:
+        raise ValueError("Model response must contain exactly one <move>...</move> payload")
+    action = content[payload_start:closing_index].strip()
     if not action:
         raise ValueError("Model response contains an empty <move> payload")
-    if content[match.end() :].strip():
+    if content[closing_index + len("</move>") :].strip():
         raise ValueError("Model response contains content after </move>")
     return action
 
@@ -122,15 +122,6 @@ class LivePolicy:
             )
         raw = response.content if hasattr(response, "content") else str(response)
         content = raw if isinstance(raw, str) else str(raw)
-        try:
-            action = _extract_move(content)
-        except ValueError as error:
-            return LiveActionResult(
-                action=None,
-                success=False,
-                latency=latency,
-                error_details=str(error),
-            )
         input_tokens = 0
         output_tokens = 0
         if hasattr(response, "usage_metadata") and response.usage_metadata:
@@ -142,6 +133,18 @@ class LivePolicy:
                 input_tokens * self._input_price_per_million
                 + output_tokens * self._output_price_per_million
             ) / 1_000_000
+        try:
+            action = _extract_move(content)
+        except ValueError as error:
+            return LiveActionResult(
+                action=None,
+                success=False,
+                latency=latency,
+                input_tokens=input_tokens,
+                output_tokens=output_tokens,
+                estimated_cost_usd=estimated_cost_usd,
+                error_details=str(error),
+            )
         return LiveActionResult(
             action=action,
             success=True,

@@ -12,6 +12,7 @@ from unittest.mock import Mock, patch
 import pytest
 
 from autoharness.cli import (
+    _baseline_artifact_name,
     _baseline_episode_count,
     evaluate_baseline_cmd,
     evaluate_cmd,
@@ -479,6 +480,13 @@ def test_baseline_uses_paper_episode_count_and_persists_report(
     assert [adapter.reset_seed for adapter in adapters] == list(report.protocol.episode_seeds)
     data = json.loads((run_dir / "evaluation" / "llm-baseline.json").read_text())
     assert len(data["results"]) == expected_count
+    assert data["model_id"] == model_id
+    assert data["protocol"]["episode_count"] == expected_count
+    assert data["protocol"]["episode_seeds"] == list(report.protocol.episode_seeds)
+    model_data = json.loads(
+        (run_dir / "evaluation" / f"{_baseline_artifact_name(model_id)}.json").read_text()
+    )
+    assert model_data == data
 
 
 @pytest.mark.parametrize(
@@ -494,6 +502,18 @@ def test_baseline_uses_paper_episode_count_and_persists_report(
 )
 def test_baseline_episode_count_uses_exact_model_name(model_id: str, expected: int) -> None:
     assert _baseline_episode_count(model_id) == expected
+
+
+@pytest.mark.parametrize(
+    ("model_id", "expected"),
+    [
+        ("openai:gpt-5.2", "llm-baseline-openai-gpt-5.2"),
+        ("Provider/Model Name", "llm-baseline-provider-model-name"),
+        (":::", "llm-baseline-model"),
+    ],
+)
+def test_baseline_artifact_name_is_filesystem_safe(model_id: str, expected: str) -> None:
+    assert _baseline_artifact_name(model_id) == expected
 
 
 def test_baseline_records_policy_construction_failure_and_continues(tmp_path: Path) -> None:
@@ -516,6 +536,12 @@ def test_baseline_records_policy_construction_failure_and_continues(tmp_path: Pa
     assert all(
         r.failure_summary == "Policy construction failed: policy boom" for r in report.results
     )
+    generic = json.loads((run_dir / "evaluation" / "llm-baseline.json").read_text())
+    model_specific = json.loads(
+        (run_dir / "evaluation" / "llm-baseline-fake-model.json").read_text()
+    )
+    assert model_specific == generic
+    assert generic["model_id"] == "fake:model"
 
 
 def test_generated_and_baseline_reports_reuse_identical_persisted_seeds(tmp_path: Path) -> None:

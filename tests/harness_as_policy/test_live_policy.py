@@ -13,10 +13,10 @@ from autoharness.harness_as_policy.live_policy import LIVE_PROMPT, LivePolicy
 class FakeChatModel(BaseChatModel):
     """A fake chat model that returns scripted responses."""
 
-    responses: list[str]
+    responses: list[str | AIMessage]
     _call_count: int = 0
 
-    def __init__(self, responses: list[str] | None = None) -> None:
+    def __init__(self, responses: list[str | AIMessage] | None = None) -> None:
         resp = responses or []
         super().__init__(responses=resp)
         self._call_count = 0
@@ -27,7 +27,8 @@ class FakeChatModel(BaseChatModel):
             response = self.responses.pop(0)
         else:
             response = "[A C]"
-        return ChatResult(generations=[ChatGeneration(message=AIMessage(content=response))])
+        message = response if isinstance(response, AIMessage) else AIMessage(content=response)
+        return ChatResult(generations=[ChatGeneration(message=message)])
 
     @property
     def _llm_type(self) -> str:
@@ -63,6 +64,10 @@ def test_live_policy_extracts_move_after_reasoning() -> None:
         ("<move>   </move>", "empty"),
         ("<move>[A C]</move> trailing", "after"),
         ("<move>[A C]</move><move>[C B]</move>", "exactly one"),
+        ("<move>bad <move>[A C]</move>", "exactly one"),
+        ("reasoning </move><move>[A C]</move>", "exactly one"),
+        ("</move><move>[A C]", "exactly one"),
+        ("<move>[A C]", "exactly one"),
     ],
 )
 def test_live_policy_rejects_malformed_move_response(response: str, error_fragment: str) -> None:
@@ -76,6 +81,30 @@ def test_live_policy_rejects_malformed_move_response(response: str, error_fragme
     assert result.action is None
     assert result.error_details is not None
     assert error_fragment in result.error_details
+
+
+def test_malformed_response_keeps_usage_and_cost() -> None:
+    message = AIMessage(
+        content="untagged action",
+        usage_metadata={"input_tokens": 120, "output_tokens": 30, "total_tokens": 150},
+    )
+    policy = LivePolicy(
+        model=FakeChatModel(responses=[message]),
+        input_price_per_million=2.0,
+        output_price_per_million=8.0,
+    )
+
+    result = policy.act(
+        env_name="TowerOfHanoi-v0",
+        rules="Rules",
+        action_format="[A C]",
+        observation="Board",
+    )
+
+    assert not result.success
+    assert result.input_tokens == 120
+    assert result.output_tokens == 30
+    assert result.estimated_cost_usd == pytest.approx(0.00048)
 
 
 def test_live_policy_returns_action() -> None:

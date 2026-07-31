@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+import re
 import sys
 import time
 from pathlib import Path
@@ -60,6 +61,19 @@ def _baseline_episode_count(model_id: str) -> int:
     """Return the Section 4.3 repetition count for a baseline model."""
     model_name = model_id.rsplit(":", maxsplit=1)[-1].lower()
     return _PAPER_BASELINE_EPISODE_COUNTS.get(model_name, 20)
+
+
+def _baseline_artifact_name(model_id: str) -> str:
+    """Return a filesystem-safe artifact name for one baseline model."""
+    suffix = re.sub(r"[^a-z0-9._-]+", "-", model_id.lower()).strip("-._")
+    return f"llm-baseline-{suffix or 'model'}"
+
+
+def _write_baseline_report(store: ArtifactStore, model_id: str, report: EvaluationReport) -> None:
+    """Persist the latest and model-specific copies of a baseline report."""
+    data = report.to_dict()
+    store.write_evaluation("llm-baseline", data)
+    store.write_evaluation(_baseline_artifact_name(model_id), data)
 
 
 class SynthesisResult(TypedDict):
@@ -343,9 +357,11 @@ def evaluate_baseline_cmd(
                 )
             )
         usage = EvaluationUsage(0, 0, 0, None)
-        report = EvaluationReport.create("llm-baseline", baseline_protocol, results, usage)
+        report = EvaluationReport.create(
+            "llm-baseline", baseline_protocol, results, usage, model_id=model_id
+        )
         print(format_evaluation_summary(report))
-        store.write_evaluation("llm-baseline", report.to_dict())
+        _write_baseline_report(store, model_id, report)
         return report
 
     for seed in baseline_protocol.episode_seeds:
@@ -399,9 +415,11 @@ def evaluate_baseline_cmd(
         total_output_tokens,
         total_estimated_cost if input_price is not None and output_price is not None else None,
     )
-    report = EvaluationReport.create("llm-baseline", baseline_protocol, results, usage)
+    report = EvaluationReport.create(
+        "llm-baseline", baseline_protocol, results, usage, model_id=model_id
+    )
     print(format_evaluation_summary(report))
-    store.write_evaluation("llm-baseline", report.to_dict())
+    _write_baseline_report(store, model_id, report)
     return report
 
 

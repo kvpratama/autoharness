@@ -192,12 +192,14 @@ artifacts/<run-id>/evaluation/
 ├── protocol.json
 ├── generated-policy.json
 ├── llm-baseline.json                    # optional latest baseline
-└── llm-baseline-<provider>-<model>.json # optional model-specific baseline
+└── llm-baseline-<provider>-<model>-<digest>.json # optional model-specific baseline
 ```
 
 Baseline reports include the requested model ID, selected episode count, and ordered evaluation
 seeds. Each baseline run updates `llm-baseline.json` for backward compatibility and also writes a
-model-specific copy so evaluations of different models do not overwrite one another.
+model-specific copy. Its filename combines a filesystem-safe model ID with the first 12 hexadecimal
+characters of the original model ID's SHA-256 digest, preventing IDs that sanitize identically from
+overwriting one another.
 
 `best.py` is the best generated policy for the run. Rollout files use schema version 3 and contain
 aggregate assessment fields plus every seeded episode, environment step, and action attempt.

@@ -14,14 +14,16 @@ class FakeChatModel(BaseChatModel):
     """A fake chat model that returns scripted responses."""
 
     responses: list[str | AIMessage]
+    prompts: list[str]
     _call_count: int = 0
 
     def __init__(self, responses: list[str | AIMessage] | None = None) -> None:
         resp = responses or []
-        super().__init__(responses=resp)
+        super().__init__(responses=resp, prompts=[])
         self._call_count = 0
 
     def _generate(self, *args, **kwargs):
+        self.prompts.append(str(args[0][0].content))
         self._call_count += 1
         if self.responses:
             response = self.responses.pop(0)
@@ -36,7 +38,13 @@ class FakeChatModel(BaseChatModel):
 
 
 def test_live_prompt_matches_appendix_b1_contract() -> None:
-    prompt = LIVE_PROMPT.format(player_id=0, observation="Current board")
+    prompt = LIVE_PROMPT.format(
+        player_id=0,
+        env_name="TowerOfHanoi-v0",
+        rules="Tower of Hanoi rules",
+        action_format="[A C]",
+        observation="Current board",
+    )
     assert "You are an expert, logical, and strategic AI game player." in prompt
     assert "First, provide your step-by-step reasoning." in prompt
     assert "<move></move>" in prompt
@@ -120,6 +128,9 @@ def test_live_policy_returns_action() -> None:
     assert result.success
     assert result.action == "[A C]"
     assert result.model_calls == 1
+    assert "TowerOfHanoi-v0" in model.prompts[0]
+    assert "Tower of Hanoi rules" in model.prompts[0]
+    assert "[A C]" in model.prompts[0]
 
 
 def test_live_policy_tracks_model_call_count() -> None:

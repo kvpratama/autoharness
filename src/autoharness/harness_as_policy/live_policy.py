@@ -19,6 +19,10 @@ LIVE_PROMPT = (
     "\n"
     "You are now player {player_id}.\n"
     "\n"
+    "The game is {env_name}.\n"
+    "The game rules are as follows: {rules}\n"
+    "The required action format is as follows: {action_format}\n"
+    "\n"
     "The game information is as follows: {observation}\n"
     "\n"
     "**YOUR TASK:**\n"
@@ -106,6 +110,9 @@ class LivePolicy:
         """Call the model to produce an action from the current observation."""
         prompt = LIVE_PROMPT.format(
             player_id=0,
+            env_name=env_name,
+            rules=rules,
+            action_format=action_format,
             observation=observation,
         )
         start = time.monotonic()

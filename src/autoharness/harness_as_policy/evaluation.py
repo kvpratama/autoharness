@@ -47,7 +47,17 @@ class EvaluationProtocol:
         return len(self.episode_seeds)
 
     def prefix(self, episode_count: int) -> EvaluationProtocol:
-        """Return an ordered evaluation view over the first paper protocol seeds."""
+        """Return an ordered evaluation view over the first paper protocol seeds.
+
+        Args:
+            episode_count: Number of evaluation episodes to include.
+
+        Returns:
+            An EvaluationProtocol instance preserving the original seed order.
+
+        Raises:
+            ValueError: If episode_count is outside the valid range [1, self.episode_count].
+        """
         if not 1 <= episode_count <= self.episode_count:
             raise ValueError(f"Evaluation episode count must be between 1 and {self.episode_count}")
         return EvaluationProtocol(

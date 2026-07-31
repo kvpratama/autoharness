@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import logging
 import re
 import sys
@@ -66,7 +67,8 @@ def _baseline_episode_count(model_id: str) -> int:
 def _baseline_artifact_name(model_id: str) -> str:
     """Return a filesystem-safe artifact name for one baseline model."""
     suffix = re.sub(r"[^a-z0-9._-]+", "-", model_id.lower()).strip("-._")
-    return f"llm-baseline-{suffix or 'model'}"
+    digest = hashlib.sha256(model_id.encode()).hexdigest()[:12]
+    return f"llm-baseline-{suffix or 'model'}-{digest}"
 
 
 def _write_baseline_report(store: ArtifactStore, model_id: str, report: EvaluationReport) -> None:
@@ -344,7 +346,7 @@ def evaluate_baseline_cmd(
             input_price_per_million=input_price,
             output_price_per_million=output_price,
         )
-    except Exception as error:
+    except ImportError as error:
         for seed in baseline_protocol.episode_seeds:
             start = time.monotonic()
             results.append(

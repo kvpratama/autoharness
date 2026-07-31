@@ -507,13 +507,20 @@ def test_baseline_episode_count_uses_exact_model_name(model_id: str, expected: i
 @pytest.mark.parametrize(
     ("model_id", "expected"),
     [
-        ("openai:gpt-5.2", "llm-baseline-openai-gpt-5.2"),
-        ("Provider/Model Name", "llm-baseline-provider-model-name"),
-        (":::", "llm-baseline-model"),
+        ("openai:gpt-5.2", "llm-baseline-openai-gpt-5.2-6544c8c29ef9"),
+        ("Provider/Model Name", "llm-baseline-provider-model-name-56921857c4ae"),
+        (":::", "llm-baseline-model-f1ae2a75ed1f"),
     ],
 )
 def test_baseline_artifact_name_is_filesystem_safe(model_id: str, expected: str) -> None:
     assert _baseline_artifact_name(model_id) == expected
+
+
+def test_baseline_artifact_name_distinguishes_ids_with_same_sanitized_suffix() -> None:
+    first = _baseline_artifact_name("provider:model/name")
+    second = _baseline_artifact_name("provider:model name")
+
+    assert first != second
 
 
 def test_baseline_records_policy_construction_failure_and_continues(tmp_path: Path) -> None:
@@ -525,7 +532,7 @@ def test_baseline_records_policy_construction_failure_and_continues(tmp_path: Pa
         patch("autoharness.cli.get_environment_spec", return_value=_baseline_spec(adapters)),
         patch(
             "autoharness.cli.LivePolicy",
-            side_effect=RuntimeError("policy boom"),
+            side_effect=ImportError("policy boom"),
         ),
     ):
         report = evaluate_baseline_cmd(run_dir, "fake:model")
@@ -538,10 +545,23 @@ def test_baseline_records_policy_construction_failure_and_continues(tmp_path: Pa
     )
     generic = json.loads((run_dir / "evaluation" / "llm-baseline.json").read_text())
     model_specific = json.loads(
-        (run_dir / "evaluation" / "llm-baseline-fake-model.json").read_text()
+        (run_dir / "evaluation" / f"{_baseline_artifact_name('fake:model')}.json").read_text()
     )
     assert model_specific == generic
     assert generic["model_id"] == "fake:model"
+
+
+def test_baseline_propagates_unexpected_policy_construction_failure(tmp_path: Path) -> None:
+    run_dir = tmp_path / "run"
+    _write_evaluation_run(run_dir, env_id="Fake-v0")
+    adapters: list[FakeBaselineAdapter] = []
+
+    with (
+        patch("autoharness.cli.get_environment_spec", return_value=_baseline_spec(adapters)),
+        patch("autoharness.cli.LivePolicy", side_effect=RuntimeError("policy boom")),
+        pytest.raises(RuntimeError, match="policy boom"),
+    ):
+        evaluate_baseline_cmd(run_dir, "fake:model")
 
 
 def test_generated_and_baseline_reports_reuse_identical_persisted_seeds(tmp_path: Path) -> None:

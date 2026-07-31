@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
+import pytest
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import AIMessage
 from langchain_core.outputs import ChatGeneration, ChatResult
 
-from autoharness.harness_as_policy.live_policy import LivePolicy
+from autoharness.harness_as_policy.live_policy import LIVE_PROMPT, LivePolicy
 
 
 class FakeChatModel(BaseChatModel):
@@ -33,9 +34,53 @@ class FakeChatModel(BaseChatModel):
         return "fake"
 
 
+def test_live_prompt_matches_appendix_b1_contract() -> None:
+    prompt = LIVE_PROMPT.format(player_id=0, observation="Current board")
+    assert "You are an expert, logical, and strategic AI game player." in prompt
+    assert "First, provide your step-by-step reasoning." in prompt
+    assert "<move></move>" in prompt
+    assert "Current board" in prompt
+    assert "Do NOT include any other text" not in prompt
+
+
+def test_live_policy_extracts_move_after_reasoning() -> None:
+    model = FakeChatModel(responses=["I compare both legal options.\n<move>[A C]</move>"])
+    result = LivePolicy(model=model).act(
+        env_name="TowerOfHanoi-v0",
+        rules="Rules",
+        action_format="[A C]",
+        observation="Board",
+    )
+    assert result.success
+    assert result.action == "[A C]"
+
+
+@pytest.mark.parametrize(
+    ("response", "error_fragment"),
+    [
+        ("[A C]", "exactly one"),
+        ("reasoning only", "exactly one"),
+        ("<move>   </move>", "empty"),
+        ("<move>[A C]</move> trailing", "after"),
+        ("<move>[A C]</move><move>[C B]</move>", "exactly one"),
+    ],
+)
+def test_live_policy_rejects_malformed_move_response(response: str, error_fragment: str) -> None:
+    result = LivePolicy(model=FakeChatModel(responses=[response])).act(
+        env_name="TowerOfHanoi-v0",
+        rules="Rules",
+        action_format="[A C]",
+        observation="Board",
+    )
+    assert not result.success
+    assert result.action is None
+    assert result.error_details is not None
+    assert error_fragment in result.error_details
+
+
 def test_live_policy_returns_action() -> None:
     """LivePolicy.act returns the model's response as an action."""
-    model = FakeChatModel(responses=["[A C]"])
+    model = FakeChatModel(responses=["<move>[A C]</move>"])
     policy = LivePolicy(model=model)
     result = policy.act(
         env_name="TowerOfHanoi-v0",

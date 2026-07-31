@@ -50,6 +50,18 @@ class SettingsKwargs(TypedDict, total=False):
     training_rollouts: int
 
 
+_PAPER_BASELINE_EPISODE_COUNTS: dict[str, int] = {
+    "gpt-5.2": 10,
+    "gpt-5.2-high": 5,
+}
+
+
+def _baseline_episode_count(model_id: str) -> int:
+    """Return the Section 4.3 repetition count for a baseline model."""
+    model_name = model_id.rsplit(":", maxsplit=1)[-1].lower()
+    return _PAPER_BASELINE_EPISODE_COUNTS.get(model_name, 20)
+
+
 class SynthesisResult(TypedDict):
     """The result of a policy synthesis run."""
 
@@ -310,6 +322,8 @@ def evaluate_baseline_cmd(
         print(f"Error: invalid evaluation protocol or run configuration: {exc}", file=sys.stderr)
         return None
 
+    baseline_protocol = protocol.prefix(_baseline_episode_count(model_id))
+
     try:
         live_policy = LivePolicy(
             model_id=model_id,
@@ -317,7 +331,7 @@ def evaluate_baseline_cmd(
             output_price_per_million=output_price,
         )
     except Exception as error:
-        for seed in protocol.episode_seeds:
+        for seed in baseline_protocol.episode_seeds:
             start = time.monotonic()
             results.append(
                 EvaluationResult.from_execution_failure(
@@ -329,12 +343,12 @@ def evaluate_baseline_cmd(
                 )
             )
         usage = EvaluationUsage(0, 0, 0, None)
-        report = EvaluationReport.create("llm-baseline", protocol, results, usage)
+        report = EvaluationReport.create("llm-baseline", baseline_protocol, results, usage)
         print(format_evaluation_summary(report))
         store.write_evaluation("llm-baseline", report.to_dict())
         return report
 
-    for seed in protocol.episode_seeds:
+    for seed in baseline_protocol.episode_seeds:
         start = time.monotonic()
         try:
             adapter = spec.create_adapter()
@@ -385,7 +399,7 @@ def evaluate_baseline_cmd(
         total_output_tokens,
         total_estimated_cost if input_price is not None and output_price is not None else None,
     )
-    report = EvaluationReport.create("llm-baseline", protocol, results, usage)
+    report = EvaluationReport.create("llm-baseline", baseline_protocol, results, usage)
     print(format_evaluation_summary(report))
     store.write_evaluation("llm-baseline", report.to_dict())
     return report

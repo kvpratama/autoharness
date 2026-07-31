@@ -46,6 +46,21 @@ class FakeExecutor:
         return ExecutionResult(True, "action", 0.0, is_legal_action=True)
 
 
+def test_evaluation_protocol_prefix_preserves_order() -> None:
+    protocol = EvaluationProtocol.create("Exact-v0", 42, [1, 2])
+    shortened = protocol.prefix(5)
+    assert shortened.episode_count == 5
+    assert shortened.episode_seeds == protocol.episode_seeds[:5]
+    assert shortened.training_episode_seeds == protocol.training_episode_seeds
+
+
+@pytest.mark.parametrize("episode_count", [0, -1, 21])
+def test_evaluation_protocol_prefix_rejects_invalid_count(episode_count: int) -> None:
+    protocol = EvaluationProtocol.create("Exact-v0", 42, [1, 2])
+    with pytest.raises(ValueError, match="between 1 and 20"):
+        protocol.prefix(episode_count)
+
+
 def test_protocol_is_reproducible_disjoint_and_round_trips() -> None:
     training = generate_episode_seeds(17, 5)
     protocol = EvaluationProtocol.create("Exact-v0", 17, training)

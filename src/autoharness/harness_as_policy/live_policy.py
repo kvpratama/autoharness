@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import time
 from dataclasses import dataclass
 
@@ -9,15 +10,52 @@ from langchain.chat_models import init_chat_model
 from langchain_core.language_models import BaseChatModel
 
 LIVE_PROMPT = (
-    "You are playing the game {env_name}.\n"
-    "Rules: {rules}\n"
-    "Action format: {action_format}\n"
+    "You are an expert, logical, and strategic AI game player. Your task is to"
+    " analyze the following game information and determine the single best move"
+    " to make.\n"
     "\n"
-    "Current observation:\n{observation}\n"
+    "Read the game rules, your player role, the current game state, and all"
+    " available moves carefully. Your objective is to play optimally to maximize"
+    " your chances of winning the game.\n"
     "\n"
-    "Return exactly one valid action matching the action format. "
-    "Do NOT include any other text, explanation, or formatting."
+    "You are now player {player_id}.\n"
+    "\n"
+    "The game information is as follows: {observation}\n"
+    "\n"
+    "**YOUR TASK:**\n"
+    "\n"
+    "You must now analyze the situation and provide your move. Follow these two"
+    " steps precisely.\n"
+    "\n"
+    "**Step 1: Think**\n"
+    "\n"
+    "First, provide your step-by-step reasoning. Analyze the current game state,"
+    " your goal, and the available moves. Evaluate the pros and cons of the most"
+    " promising options and explain why you are selecting your final move.\n"
+    "\n"
+    "**Step 2: Move**\n"
+    "\n"
+    "After your thinking block, provide only the single best move you have"
+    " chosen. The move must be one of the valid moves listed in the game"
+    " information. Enclose your final move in <move></move> tags. Do not add any"
+    " other text, explanation, or punctuation after the closing </move> tag."
+    " Example of a correct response format: <move>[Your chosen move]</move>\n"
 )
+
+_MOVE_PATTERN = re.compile(r"<move>(.*?)</move>", re.DOTALL)
+
+
+def _extract_move(content: str) -> str:
+    matches = list(_MOVE_PATTERN.finditer(content))
+    if len(matches) != 1:
+        raise ValueError("Model response must contain exactly one <move>...</move> payload")
+    match = matches[0]
+    action = match.group(1).strip()
+    if not action:
+        raise ValueError("Model response contains an empty <move> payload")
+    if content[match.end() :].strip():
+        raise ValueError("Model response contains content after </move>")
+    return action
 
 
 @dataclass
@@ -67,9 +105,7 @@ class LivePolicy:
     ) -> LiveActionResult:
         """Call the model to produce an action from the current observation."""
         prompt = LIVE_PROMPT.format(
-            env_name=env_name,
-            rules=rules,
-            action_format=action_format,
+            player_id=0,
             observation=observation,
         )
         start = time.monotonic()
@@ -86,13 +122,14 @@ class LivePolicy:
             )
         raw = response.content if hasattr(response, "content") else str(response)
         content = raw if isinstance(raw, str) else str(raw)
-        action = content.strip()
-        if not action:
+        try:
+            action = _extract_move(content)
+        except ValueError as error:
             return LiveActionResult(
                 action=None,
                 success=False,
                 latency=latency,
-                error_details="Model returned empty response",
+                error_details=str(error),
             )
         input_tokens = 0
         output_tokens = 0

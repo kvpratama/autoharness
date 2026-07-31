@@ -11,7 +11,13 @@ from unittest.mock import Mock, patch
 
 import pytest
 
-from autoharness.cli import evaluate_baseline_cmd, evaluate_cmd, main, synthesize_cmd
+from autoharness.cli import (
+    _baseline_episode_count,
+    evaluate_baseline_cmd,
+    evaluate_cmd,
+    main,
+    synthesize_cmd,
+)
 from autoharness.harness_as_policy.environments.registry import EnvironmentSpec
 from autoharness.harness_as_policy.evaluation import (
     EvaluationProtocol,
@@ -440,6 +446,54 @@ def test_baseline_actionless_failure_is_excluded_from_legality(tmp_path: Path) -
     assert report.aggregate.action_attempt_count == 19
     assert report.aggregate.legal_action_count == 19
     assert report.aggregate.legal_action_rate == 1.0
+
+
+@pytest.mark.parametrize(
+    ("model_id", "expected_count"),
+    [
+        ("google_genai:gemini-2.5-flash", 20),
+        ("openai:gpt-5.2", 10),
+        ("openai:gpt-5.2-high", 5),
+    ],
+)
+def test_baseline_uses_paper_episode_count_and_persists_report(
+    tmp_path: Path, model_id: str, expected_count: int
+) -> None:
+    run_dir = tmp_path / "run"
+    _write_evaluation_run(run_dir, env_id="Fake-v0")
+    adapters: list[FakeBaselineAdapter] = []
+    live_policy = Mock()
+    live_policy.act.return_value = LiveActionResult(
+        action="[A C]", success=True, latency=0.01, model_calls=1
+    )
+
+    with (
+        patch("autoharness.cli.get_environment_spec", return_value=_baseline_spec(adapters)),
+        patch("autoharness.cli.LivePolicy", return_value=live_policy),
+    ):
+        report = evaluate_baseline_cmd(run_dir, model_id)
+
+    assert report is not None
+    assert report.protocol.episode_count == expected_count
+    assert len(report.results) == expected_count
+    assert [adapter.reset_seed for adapter in adapters] == list(report.protocol.episode_seeds)
+    data = json.loads((run_dir / "evaluation" / "llm-baseline.json").read_text())
+    assert len(data["results"]) == expected_count
+
+
+@pytest.mark.parametrize(
+    ("model_id", "expected"),
+    [
+        ("gpt-5.2", 10),
+        ("openai:gpt-5.2", 10),
+        ("gpt-5.2-high", 5),
+        ("openai:gpt-5.2-high", 5),
+        ("openai:gpt-5.2-mini", 20),
+        ("custom:my-gpt-5.2", 20),
+    ],
+)
+def test_baseline_episode_count_uses_exact_model_name(model_id: str, expected: int) -> None:
+    assert _baseline_episode_count(model_id) == expected
 
 
 def test_baseline_records_policy_construction_failure_and_continues(tmp_path: Path) -> None:

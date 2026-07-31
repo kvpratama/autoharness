@@ -46,6 +46,18 @@ class EvaluationProtocol:
         """Return the fixed number of evaluation episodes."""
         return len(self.episode_seeds)
 
+    def prefix(self, episode_count: int) -> EvaluationProtocol:
+        """Return an ordered evaluation view over the first paper protocol seeds."""
+        if not 1 <= episode_count <= PAPER_1P_EPISODE_COUNT:
+            raise ValueError("Evaluation episode count must be between 1 and 20")
+        return EvaluationProtocol(
+            self.env_id,
+            self.episode_seeds[:episode_count],
+            self.training_episode_seeds,
+            self.schema_version,
+            self.name,
+        )
+
     @classmethod
     def create(
         cls, env_id: str, environment_seed: int, training_episode_seeds: Sequence[int]
@@ -179,7 +191,9 @@ class EvaluationReport:
     ) -> EvaluationReport:
         """Validate ordered results and calculate canonical metrics."""
         if len(results) != protocol.episode_count:
-            raise ValueError("Evaluation results must contain exactly 20 episodes")
+            raise ValueError(
+                f"Evaluation results must contain exactly {protocol.episode_count} episodes"
+            )
         if [result.seed for result in results] != list(protocol.episode_seeds):
             raise ValueError("Evaluation result seeds must match protocol order")
         if any(result.env_id != protocol.env_id for result in results):

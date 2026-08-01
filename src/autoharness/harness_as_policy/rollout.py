@@ -232,7 +232,8 @@ class RolloutEvaluator:
             TerminationReason.EXECUTION_FAILURE,
             TerminationReason.CONTRACT_FAILURE,
         )
-        reward = 0.0 if failed else (steps[-1].reward if steps else 0.0)
+        terminal_step = steps[-1] if steps and steps[-1].terminated else None
+        reward = 0.0 if failed or terminal_step is None else terminal_step.reward
         legal = sum(step.is_legal for step in steps)
         return RolloutResult(
             steps=steps,

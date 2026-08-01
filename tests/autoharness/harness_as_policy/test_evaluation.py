@@ -46,6 +46,28 @@ class FakeExecutor:
         return ExecutionResult(True, "action", 0.0, is_legal_action=True)
 
 
+def test_evaluation_protocol_prefix_preserves_order() -> None:
+    protocol = EvaluationProtocol.create("Exact-v0", 42, [1, 2])
+    shortened = protocol.prefix(5)
+    assert shortened.episode_count == 5
+    assert shortened.episode_seeds == protocol.episode_seeds[:5]
+    assert shortened.training_episode_seeds == protocol.training_episode_seeds
+
+
+@pytest.mark.parametrize("episode_count", [0, -1, 21])
+def test_evaluation_protocol_prefix_rejects_invalid_count(episode_count: int) -> None:
+    protocol = EvaluationProtocol.create("Exact-v0", 42, [1, 2])
+    with pytest.raises(ValueError, match="between 1 and 20"):
+        protocol.prefix(episode_count)
+
+
+def test_evaluation_protocol_prefix_rejects_count_above_current_length() -> None:
+    shortened = EvaluationProtocol.create("Exact-v0", 42, [1, 2]).prefix(5)
+
+    with pytest.raises(ValueError, match="between 1 and 5"):
+        shortened.prefix(10)
+
+
 def test_protocol_is_reproducible_disjoint_and_round_trips() -> None:
     training = generate_episode_seeds(17, 5)
     protocol = EvaluationProtocol.create("Exact-v0", 17, training)
@@ -225,6 +247,32 @@ def test_report_aggregates_mean_reward_and_action_weighted_legality() -> None:
     assert report.aggregate.legal_action_rate == pytest.approx(2 / 3)
 
 
+def test_baseline_report_serializes_model_and_selected_protocol() -> None:
+    protocol = EvaluationProtocol("Exact-v0", tuple(range(5)), ())
+    report = EvaluationReport.create(
+        "llm-baseline",
+        protocol,
+        [_result(seed, legal=1, attempts=1) for seed in range(5)],
+        model_id="openai:gpt-5.2-high",
+    )
+
+    data = report.to_dict()
+
+    assert data["model_id"] == "openai:gpt-5.2-high"
+    assert data["protocol"] == {
+        "schema_version": 1,
+        "name": "paper-1p",
+        "env_id": "Exact-v0",
+        "episode_count": 5,
+        "episode_seeds": list(range(5)),
+        "training_episode_seeds": [],
+        "metrics": {
+            "reward": "arithmetic_mean",
+            "legal_action_rate": "legal_actions / proposed_action_attempts",
+        },
+    }
+
+
 def test_report_uses_no_legality_denominator_for_actionless_failures() -> None:
     protocol = EvaluationProtocol("Exact-v0", tuple(range(20)), ())
     results = [
@@ -259,14 +307,15 @@ def test_report_rejects_results_that_do_not_match_protocol(
         EvaluationReport.create("generated-policy", protocol, results)
 
 
-def test_evaluate_policy_on_env_preserves_step_limit_reward() -> None:
+def test_evaluate_policy_on_env_ignores_nonterminal_step_limit_reward() -> None:
     adapter = FakeAdapter(
         max_steps=1,
         step_result=StepResult("next", "action", True, 0.6, False, ""),
     )
+
     result = evaluate_policy_on_env(adapter, FakeExecutor(), "source", seed=123)
 
-    assert result.reward == 0.6
+    assert result.reward == 0.0
     assert result.termination_reason == TerminationReason.STEP_LIMIT
     assert result.action_attempt_count == 1
 

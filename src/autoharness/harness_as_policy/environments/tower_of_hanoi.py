@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import re
-from typing import Any, Protocol, cast, runtime_checkable
+from typing import Protocol, cast, runtime_checkable
 
 import textarena as ta
 
@@ -15,30 +15,22 @@ class _TowerState(Protocol):
     """Structural interface for the TextArena Tower of Hanoi game-state object.
 
     The concrete type is an internal TextArena detail; we only rely on
-    ``.rewards`` (a mapping from player-id to float) and ``.game_state``
-    (a dict containing board tower data).
+    ``.rewards`` (a mapping from player-id to float).
     """
 
     @property
     def rewards(self) -> dict[int, float]: ...
-
-    @property
-    def game_state(self) -> dict[str, Any]: ...
 
 
 class _TowerEnv(Protocol):
     """Structural interface for the unwrapped inner TextArena environment.
 
     After peeling off all ``env`` wrapper layers we only need ``state``
-    to read back the current game state and ``num_disks`` for the
-    completion fraction.
+    to read back the terminal reward.
     """
 
     @property
     def state(self) -> _TowerState: ...
-
-    @property
-    def num_disks(self) -> int: ...
 
 
 DIFFICULTY_MAP: dict[str, tuple[str, int, int]] = {
@@ -70,7 +62,6 @@ class TowerOfHanoiAdapter:
         self._env: ta.Env | None = None
         self._state: _TowerState | None = None
         self._inner_env: _TowerEnv | None = None
-        self._num_disks: int | None = None
         self._observation: str = ""
 
     @property
@@ -105,7 +96,6 @@ class TowerOfHanoiAdapter:
         while hasattr(environment, "env"):
             environment = getattr(environment, "env")  # noqa: B009 – `object` has no `.env`
         self._inner_env = cast(_TowerEnv, environment)
-        self._num_disks = self._inner_env.num_disks
         self._state = None
 
     def reset(self, seed: int | None = None) -> str:
@@ -197,24 +187,7 @@ class TowerOfHanoiAdapter:
             observation=self._observation,
             action=action,
             is_legal=True,
-            reward=self._completion_fraction(),
+            reward=0.0,
             terminated=False,
             feedback="",
         )
-
-    def _completion_fraction(self) -> float:
-        """Fraction of disks correctly stacked from the base on peg C.
-
-        Mirrors TextArena's completion metric without calling private APIs.
-        """
-        if self._state is None or self._num_disks is None:
-            raise RuntimeError("Call create() and reset() before reading board progress.")
-        goal = list(range(self._num_disks, 0, -1))
-        tower_c = self._state.game_state["towers"]["C"]
-        correct = 0
-        for placed, expected in zip(tower_c, goal, strict=False):
-            if placed == expected:
-                correct += 1
-            else:
-                break
-        return correct / self._num_disks

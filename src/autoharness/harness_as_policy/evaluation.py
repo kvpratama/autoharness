@@ -46,6 +46,28 @@ class EvaluationProtocol:
         """Return the fixed number of evaluation episodes."""
         return len(self.episode_seeds)
 
+    def prefix(self, episode_count: int) -> EvaluationProtocol:
+        """Return an ordered evaluation view over the first paper protocol seeds.
+
+        Args:
+            episode_count: Number of evaluation episodes to include.
+
+        Returns:
+            An EvaluationProtocol instance preserving the original seed order.
+
+        Raises:
+            ValueError: If episode_count is outside the valid range [1, self.episode_count].
+        """
+        if not 1 <= episode_count <= self.episode_count:
+            raise ValueError(f"Evaluation episode count must be between 1 and {self.episode_count}")
+        return EvaluationProtocol(
+            self.env_id,
+            self.episode_seeds[:episode_count],
+            self.training_episode_seeds,
+            self.schema_version,
+            self.name,
+        )
+
     @classmethod
     def create(
         cls, env_id: str, environment_seed: int, training_episode_seeds: Sequence[int]
@@ -168,6 +190,7 @@ class EvaluationReport:
     results: list[EvaluationResult]
     aggregate: EvaluationAggregate
     usage: EvaluationUsage | None = None
+    model_id: str | None = None
 
     @classmethod
     def create(
@@ -176,10 +199,13 @@ class EvaluationReport:
         protocol: EvaluationProtocol,
         results: list[EvaluationResult],
         usage: EvaluationUsage | None = None,
+        model_id: str | None = None,
     ) -> EvaluationReport:
         """Validate ordered results and calculate canonical metrics."""
         if len(results) != protocol.episode_count:
-            raise ValueError("Evaluation results must contain exactly 20 episodes")
+            raise ValueError(
+                f"Evaluation results must contain exactly {protocol.episode_count} episodes"
+            )
         if [result.seed for result in results] != list(protocol.episode_seeds):
             raise ValueError("Evaluation result seeds must match protocol order")
         if any(result.env_id != protocol.env_id for result in results):
@@ -197,7 +223,7 @@ class EvaluationReport:
             latency,
             latency / len(results),
         )
-        return cls(policy_kind, protocol, results, aggregate, usage)
+        return cls(policy_kind, protocol, results, aggregate, usage, model_id)
 
     def to_dict(self) -> dict[str, object]:
         """Serialize the complete report as JSON-compatible data."""
@@ -209,14 +235,17 @@ class EvaluationReport:
             asdict(result) | {"termination_reason": result.termination_reason.value}
             for result in self.results
         ]
-        return {
+        data: dict[str, object] = {
             "schema_version": 1,
             "policy_kind": self.policy_kind,
-            "protocol": {"name": self.protocol.name, "env_id": self.protocol.env_id},
+            "protocol": self.protocol.to_dict(),
             "aggregate": aggregate,
             "results": results,
             "usage": asdict(self.usage) if self.usage is not None else None,
         }
+        if self.model_id is not None:
+            data["model_id"] = self.model_id
+        return data
 
 
 def evaluate_action_provider_on_env(

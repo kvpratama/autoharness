@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import re
-from typing import Any, Protocol, cast, runtime_checkable
+from typing import Protocol, cast, runtime_checkable
 
 import textarena as ta
 
@@ -15,15 +15,11 @@ class _BlackjackState(Protocol):
     """Structural interface for the TextArena Blackjack game-state object.
 
     The concrete type is an internal TextArena detail; we only rely on
-    ``.rewards`` (a mapping from player-id to float) and ``.game_state``
-    (a plain ``dict`` of summary statistics).
+    ``.rewards`` (a mapping from player-id to float).
     """
 
     @property
     def rewards(self) -> dict[int, float]: ...
-
-    @property
-    def game_state(self) -> dict[str, Any]: ...
 
 
 class _BlackjackEnv(Protocol):
@@ -121,15 +117,7 @@ class BlackjackAdapter:
             observation=self._observation,
             action=action,
             is_legal=True,
-            reward=self._completion_reward(),
+            reward=0.0,
             terminated=False,
             feedback="",
         )
-
-    def _completion_reward(self) -> float:
-        """Return normalized progress across completed Blackjack hands."""
-        if self._state is None:
-            raise RuntimeError("Call create() and reset() before reading Blackjack progress.")
-        summary = self._state.game_state["results_summary"]
-        hands = int(self._state.game_state["num_hands"])
-        return (float(summary["win"]) + 0.5 * float(summary["draw"])) / hands

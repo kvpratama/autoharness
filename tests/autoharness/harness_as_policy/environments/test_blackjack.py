@@ -53,6 +53,7 @@ def test_standing_completes_five_hands_and_propagates_reward() -> None:
         result = adapter.step("[Stand]")
         assert result.is_legal
         assert not result.terminated
+        assert result.reward == 0.0
     final_result = adapter.step("[Stand]")
     assert final_result.is_legal
     assert final_result.terminated

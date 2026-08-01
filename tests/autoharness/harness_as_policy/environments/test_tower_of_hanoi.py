@@ -152,16 +152,14 @@ def test_reset_before_create_raises() -> None:
         adapter.reset(seed=42)
 
 
-def test_legal_non_terminal_step_reports_completion_fraction() -> None:
-    """Legal non-terminal steps report board progress on reward for truncation."""
+def test_legal_non_terminal_steps_have_no_reward() -> None:
+    """Legal nonterminal steps reserve reward for environment termination."""
     adapter = TowerOfHanoiAdapter(difficulty="v0")
     adapter.create()
     adapter.reset(seed=42)
-    rewards: list[float] = []
+
     for action in ("[A C]", "[A B]", "[C B]", "[A C]"):
         result = adapter.step(action)
         assert result.is_legal
         assert not result.terminated
-        rewards.append(result.reward)
-
-    assert rewards[-1] == pytest.approx(1 / 3)
+        assert result.reward == 0.0

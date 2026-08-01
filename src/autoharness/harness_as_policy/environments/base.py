@@ -36,6 +36,6 @@ class EnvironmentAdapter(Protocol):
     def step(self, action: str) -> StepResult:
         """Submit an action and return the normalized step result.
 
-        Legal non-terminal steps should report current progress on ``reward`` so
-        truncation can use the last step's reward without a second env query.
+        Legal nonterminal steps must report ``0.0`` on ``reward``. Environment
+        reward is exposed only on terminal steps.
         """

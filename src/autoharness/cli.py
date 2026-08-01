@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import logging
+import re
 import sys
 import time
 from pathlib import Path
@@ -48,6 +50,32 @@ class SettingsKwargs(TypedDict, total=False):
     max_source_size: int
     environment_seed: int
     training_rollouts: int
+
+
+_PAPER_BASELINE_EPISODE_COUNTS: dict[str, int] = {
+    "gpt-5.2": 10,
+    "gpt-5.2-high": 5,
+}
+
+
+def _baseline_episode_count(model_id: str) -> int:
+    """Return the Section 4.3 repetition count for a baseline model."""
+    model_name = model_id.rsplit(":", maxsplit=1)[-1].lower()
+    return _PAPER_BASELINE_EPISODE_COUNTS.get(model_name, 20)
+
+
+def _baseline_artifact_name(model_id: str) -> str:
+    """Return a filesystem-safe artifact name for one baseline model."""
+    suffix = re.sub(r"[^a-z0-9._-]+", "-", model_id.lower()).strip("-._")
+    digest = hashlib.sha256(model_id.encode()).hexdigest()[:12]
+    return f"llm-baseline-{suffix or 'model'}-{digest}"
+
+
+def _write_baseline_report(store: ArtifactStore, model_id: str, report: EvaluationReport) -> None:
+    """Persist the latest and model-specific copies of a baseline report."""
+    data = report.to_dict()
+    store.write_evaluation("llm-baseline", data)
+    store.write_evaluation(_baseline_artifact_name(model_id), data)
 
 
 class SynthesisResult(TypedDict):
@@ -310,14 +338,16 @@ def evaluate_baseline_cmd(
         print(f"Error: invalid evaluation protocol or run configuration: {exc}", file=sys.stderr)
         return None
 
+    baseline_protocol = protocol.prefix(_baseline_episode_count(model_id))
+
     try:
         live_policy = LivePolicy(
             model_id=model_id,
             input_price_per_million=input_price,
             output_price_per_million=output_price,
         )
-    except Exception as error:
-        for seed in protocol.episode_seeds:
+    except ImportError as error:
+        for seed in baseline_protocol.episode_seeds:
             start = time.monotonic()
             results.append(
                 EvaluationResult.from_execution_failure(
@@ -329,12 +359,14 @@ def evaluate_baseline_cmd(
                 )
             )
         usage = EvaluationUsage(0, 0, 0, None)
-        report = EvaluationReport.create("llm-baseline", protocol, results, usage)
+        report = EvaluationReport.create(
+            "llm-baseline", baseline_protocol, results, usage, model_id=model_id
+        )
         print(format_evaluation_summary(report))
-        store.write_evaluation("llm-baseline", report.to_dict())
+        _write_baseline_report(store, model_id, report)
         return report
 
-    for seed in protocol.episode_seeds:
+    for seed in baseline_protocol.episode_seeds:
         start = time.monotonic()
         try:
             adapter = spec.create_adapter()
@@ -385,9 +417,11 @@ def evaluate_baseline_cmd(
         total_output_tokens,
         total_estimated_cost if input_price is not None and output_price is not None else None,
     )
-    report = EvaluationReport.create("llm-baseline", protocol, results, usage)
+    report = EvaluationReport.create(
+        "llm-baseline", baseline_protocol, results, usage, model_id=model_id
+    )
     print(format_evaluation_summary(report))
-    store.write_evaluation("llm-baseline", report.to_dict())
+    _write_baseline_report(store, model_id, report)
     return report
 
 

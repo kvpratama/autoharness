@@ -11,7 +11,14 @@ from unittest.mock import Mock, patch
 
 import pytest
 
-from autoharness.cli import evaluate_baseline_cmd, evaluate_cmd, main, synthesize_cmd
+from autoharness.cli import (
+    _baseline_artifact_name,
+    _baseline_episode_count,
+    evaluate_baseline_cmd,
+    evaluate_cmd,
+    main,
+    synthesize_cmd,
+)
 from autoharness.harness_as_policy.environments.registry import EnvironmentSpec
 from autoharness.harness_as_policy.evaluation import (
     EvaluationProtocol,
@@ -442,6 +449,80 @@ def test_baseline_actionless_failure_is_excluded_from_legality(tmp_path: Path) -
     assert report.aggregate.legal_action_rate == 1.0
 
 
+@pytest.mark.parametrize(
+    ("model_id", "expected_count"),
+    [
+        ("google_genai:gemini-2.5-flash", 20),
+        ("openai:gpt-5.2", 10),
+        ("openai:gpt-5.2-high", 5),
+    ],
+)
+def test_baseline_uses_paper_episode_count_and_persists_report(
+    tmp_path: Path, model_id: str, expected_count: int
+) -> None:
+    run_dir = tmp_path / "run"
+    _write_evaluation_run(run_dir, env_id="Fake-v0")
+    adapters: list[FakeBaselineAdapter] = []
+    live_policy = Mock()
+    live_policy.act.return_value = LiveActionResult(
+        action="[A C]", success=True, latency=0.01, model_calls=1
+    )
+
+    with (
+        patch("autoharness.cli.get_environment_spec", return_value=_baseline_spec(adapters)),
+        patch("autoharness.cli.LivePolicy", return_value=live_policy),
+    ):
+        report = evaluate_baseline_cmd(run_dir, model_id)
+
+    assert report is not None
+    assert report.protocol.episode_count == expected_count
+    assert len(report.results) == expected_count
+    assert [adapter.reset_seed for adapter in adapters] == list(report.protocol.episode_seeds)
+    data = json.loads((run_dir / "evaluation" / "llm-baseline.json").read_text())
+    assert len(data["results"]) == expected_count
+    assert data["model_id"] == model_id
+    assert data["protocol"]["episode_count"] == expected_count
+    assert data["protocol"]["episode_seeds"] == list(report.protocol.episode_seeds)
+    model_data = json.loads(
+        (run_dir / "evaluation" / f"{_baseline_artifact_name(model_id)}.json").read_text()
+    )
+    assert model_data == data
+
+
+@pytest.mark.parametrize(
+    ("model_id", "expected"),
+    [
+        ("gpt-5.2", 10),
+        ("openai:gpt-5.2", 10),
+        ("gpt-5.2-high", 5),
+        ("openai:gpt-5.2-high", 5),
+        ("openai:gpt-5.2-mini", 20),
+        ("custom:my-gpt-5.2", 20),
+    ],
+)
+def test_baseline_episode_count_uses_exact_model_name(model_id: str, expected: int) -> None:
+    assert _baseline_episode_count(model_id) == expected
+
+
+@pytest.mark.parametrize(
+    ("model_id", "expected"),
+    [
+        ("openai:gpt-5.2", "llm-baseline-openai-gpt-5.2-6544c8c29ef9"),
+        ("Provider/Model Name", "llm-baseline-provider-model-name-56921857c4ae"),
+        (":::", "llm-baseline-model-f1ae2a75ed1f"),
+    ],
+)
+def test_baseline_artifact_name_is_filesystem_safe(model_id: str, expected: str) -> None:
+    assert _baseline_artifact_name(model_id) == expected
+
+
+def test_baseline_artifact_name_distinguishes_ids_with_same_sanitized_suffix() -> None:
+    first = _baseline_artifact_name("provider:model/name")
+    second = _baseline_artifact_name("provider:model name")
+
+    assert first != second
+
+
 def test_baseline_records_policy_construction_failure_and_continues(tmp_path: Path) -> None:
     run_dir = tmp_path / "run"
     _write_evaluation_run(run_dir, env_id="Fake-v0")
@@ -451,7 +532,7 @@ def test_baseline_records_policy_construction_failure_and_continues(tmp_path: Pa
         patch("autoharness.cli.get_environment_spec", return_value=_baseline_spec(adapters)),
         patch(
             "autoharness.cli.LivePolicy",
-            side_effect=RuntimeError("policy boom"),
+            side_effect=ImportError("policy boom"),
         ),
     ):
         report = evaluate_baseline_cmd(run_dir, "fake:model")
@@ -462,6 +543,25 @@ def test_baseline_records_policy_construction_failure_and_continues(tmp_path: Pa
     assert all(
         r.failure_summary == "Policy construction failed: policy boom" for r in report.results
     )
+    generic = json.loads((run_dir / "evaluation" / "llm-baseline.json").read_text())
+    model_specific = json.loads(
+        (run_dir / "evaluation" / f"{_baseline_artifact_name('fake:model')}.json").read_text()
+    )
+    assert model_specific == generic
+    assert generic["model_id"] == "fake:model"
+
+
+def test_baseline_propagates_unexpected_policy_construction_failure(tmp_path: Path) -> None:
+    run_dir = tmp_path / "run"
+    _write_evaluation_run(run_dir, env_id="Fake-v0")
+    adapters: list[FakeBaselineAdapter] = []
+
+    with (
+        patch("autoharness.cli.get_environment_spec", return_value=_baseline_spec(adapters)),
+        patch("autoharness.cli.LivePolicy", side_effect=RuntimeError("policy boom")),
+        pytest.raises(RuntimeError, match="policy boom"),
+    ):
+        evaluate_baseline_cmd(run_dir, "fake:model")
 
 
 def test_generated_and_baseline_reports_reuse_identical_persisted_seeds(tmp_path: Path) -> None:

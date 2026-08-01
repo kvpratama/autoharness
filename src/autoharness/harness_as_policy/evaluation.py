@@ -238,12 +238,7 @@ class EvaluationReport:
         data: dict[str, object] = {
             "schema_version": 1,
             "policy_kind": self.policy_kind,
-            "protocol": {
-                "name": self.protocol.name,
-                "env_id": self.protocol.env_id,
-                "episode_count": self.protocol.episode_count,
-                "episode_seeds": list(self.protocol.episode_seeds),
-            },
+            "protocol": self.protocol.to_dict(),
             "aggregate": aggregate,
             "results": results,
             "usage": asdict(self.usage) if self.usage is not None else None,

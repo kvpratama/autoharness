@@ -260,10 +260,16 @@ def test_baseline_report_serializes_model_and_selected_protocol() -> None:
 
     assert data["model_id"] == "openai:gpt-5.2-high"
     assert data["protocol"] == {
+        "schema_version": 1,
         "name": "paper-1p",
         "env_id": "Exact-v0",
         "episode_count": 5,
         "episode_seeds": list(range(5)),
+        "training_episode_seeds": [],
+        "metrics": {
+            "reward": "arithmetic_mean",
+            "legal_action_rate": "legal_actions / proposed_action_attempts",
+        },
     }
 
 

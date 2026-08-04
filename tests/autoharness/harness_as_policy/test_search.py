@@ -908,6 +908,49 @@ def test_inconsistent_refiner_success_does_not_reference_candidate(tmp_path: Pat
     assert refinement["metadata"]["success"] is False
 
 
+def test_failed_refinement_logs_error_without_candidate_id(
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    class FailedRefiner(FakeRefiner):
+        def refine(
+            self,
+            rules: str = "",
+            action_format: str = "",
+            parent_source: str = "",
+            parent_heuristic: float = 0.0,
+            parent_reward: float = 0.0,
+            parent_legal_actions: int = 0,
+            parent_status: str = "",
+            trajectory: str = "",
+            env_name: str = "",
+            *,
+            refine_legal_action: bool,
+        ) -> RefinerResult:
+            self._call_count += 1
+            return RefinerResult(
+                success=False,
+                source=None,
+                error_details="provider failed",
+            )
+
+    caplog.set_level("INFO", logger="autoharness.harness_as_policy.search")
+
+    synthesize(
+        adapter=FakeAdapter(),
+        profile=Profile.SMOKE,
+        refiner=FailedRefiner([]),
+        artifact_root=tmp_path,
+        refinements=1,
+    )
+
+    failure_logs = [
+        message for message in caplog.messages if message.startswith("Refinement failed")
+    ]
+    assert failure_logs == ["Refinement failed — provider failed"]
+    assert "candidate" not in failure_logs[0]
+
+
 def test_synthesize_reuses_shared_environment_seeds_for_every_candidate(tmp_path: Path) -> None:
     """All assessed candidates receive the same ordered training seed list."""
     adapter = FakeAdapter()

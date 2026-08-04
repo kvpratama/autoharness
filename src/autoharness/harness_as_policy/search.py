@@ -465,14 +465,11 @@ def synthesize(
             )
         )
 
-        logger.info(
-            "Refinement %s — candidate %s",
-            "succeeded" if accepted else "failed",
-            child_id,
-        )
         if not accepted:
+            logger.info("Refinement failed — %s", refine_result.error_details)
             continue
 
+        logger.info("Refinement succeeded — candidate %s", child_id)
         assert source is not None
         store.write_candidate(child_id, source)
         assessment = assessor.assess(source, episode_seeds)

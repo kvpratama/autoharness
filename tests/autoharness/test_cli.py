@@ -58,7 +58,7 @@ class FakeBaselineAdapter:
         return self.step_result
 
 
-def test_synthesize_cmd_requires_env() -> None:
+def test_synthesize_cmd_requires_env(capsys: pytest.CaptureFixture[str]) -> None:
     """synthesize command requires --env flag."""
     with (
         tempfile.TemporaryDirectory() as tmpdir,
@@ -70,10 +70,10 @@ def test_synthesize_cmd_requires_env() -> None:
             "stop_reason": "budget exhausted",
             "best_candidate_id": "001",
             "total_candidates": 3,
-            "iterations_used": 2,
+            "attempted_refinements": 2,
+            "successful_tree_nodes": 1,
+            "provider_calls": 3,
             "profile": "smoke",
-            "model_call_count": 2,
-            "logical_refinement_count": 2,
         }
         with patch(
             "sys.argv",
@@ -93,6 +93,10 @@ def test_synthesize_cmd_requires_env() -> None:
             result = synthesize_cmd()
     assert result is not None
     assert result["run_id"] == "test123"
+    output = capsys.readouterr().out
+    assert "Attempted refinements: 2" in output
+    assert "Successful tree nodes: 1" in output
+    assert "Provider calls: 3" in output
 
 
 def test_synthesize_cmd_creates_artifacts() -> None:
@@ -107,10 +111,10 @@ def test_synthesize_cmd_creates_artifacts() -> None:
             "stop_reason": "completed",
             "best_candidate_id": "001",
             "total_candidates": 3,
-            "iterations_used": 2,
+            "attempted_refinements": 2,
+            "successful_tree_nodes": 1,
+            "provider_calls": 3,
             "profile": "smoke",
-            "model_call_count": 2,
-            "logical_refinement_count": 2,
         }
 
         with patch(
@@ -146,10 +150,10 @@ def test_synthesize_cmd_full_search() -> None:
             "stop_reason": "budget exhausted",
             "best_candidate_id": "001",
             "total_candidates": 3,
-            "iterations_used": 2,
+            "attempted_refinements": 2,
+            "successful_tree_nodes": 1,
+            "provider_calls": 3,
             "profile": "full-search",
-            "model_call_count": 2,
-            "logical_refinement_count": 2,
         }
         with patch(
             "sys.argv",
@@ -183,10 +187,10 @@ def test_synthesize_cmd_full_search_override() -> None:
             "stop_reason": "budget exhausted",
             "best_candidate_id": "001",
             "total_candidates": 3,
-            "iterations_used": 2,
+            "attempted_refinements": 2,
+            "successful_tree_nodes": 1,
+            "provider_calls": 3,
             "profile": "full-search",
-            "model_call_count": 2,
-            "logical_refinement_count": 2,
         }
         with patch(
             "sys.argv",
@@ -222,10 +226,10 @@ def test_synthesize_cmd_preserves_explicit_training_rollouts() -> None:
             "stop_reason": "budget exhausted",
             "best_candidate_id": "001",
             "total_candidates": 3,
-            "iterations_used": 2,
+            "attempted_refinements": 2,
+            "successful_tree_nodes": 1,
+            "provider_calls": 3,
             "profile": "smoke",
-            "model_call_count": 2,
-            "logical_refinement_count": 2,
         }
         with patch(
             "sys.argv",

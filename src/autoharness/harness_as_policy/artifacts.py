@@ -186,6 +186,8 @@ class ArtifactStore:
             "extracted_source": trace.extracted_source,
             "outcome": trace.outcome,
             "error_details": trace.error_details,
+            "generation_succeeded": trace.generation_succeeded,
+            "contract_valid": trace.contract_valid,
         }
         path = self._run_dir / "refinements" / f"{iteration:03d}.json"
         self._write_json(path, data)

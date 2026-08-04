@@ -36,6 +36,8 @@ class RefinementTrace:
     extracted_source: str | None = None
     outcome: RefinementOutcome = RefinementOutcome.IN_PROGRESS
     error_details: str | None = None
+    generation_succeeded: bool = False
+    contract_valid: bool = False
 
 
 class TerminationReason(StrEnum):
@@ -154,6 +156,7 @@ class Candidate:
     failure_count: int = 0
     episode_count: int = 0
     assessment: CandidateAssessment | None = None
+    rollout_eligible: bool = False
 
 
 @dataclass

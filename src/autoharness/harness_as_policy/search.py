@@ -12,9 +12,9 @@ from typing import Any, Literal, TypedDict
 from autoharness.harness_as_policy.artifacts import ArtifactStore
 from autoharness.harness_as_policy.assessment import (
     CandidateAssessor,
+    assessment_is_rollout_eligible,
     build_assessment_trajectory,
     build_initial_trajectory,
-    failed_assessment,
     generate_episode_seeds,
     should_refine_legal_action,
 )
@@ -36,7 +36,7 @@ ROOT_ID = "000"
 
 _RankingComponent = Literal["heuristic", "reward", "legal_actions", "failures", "iteration"]
 _RankingDirection = Literal["ascending", "descending"]
-_RankingExclusionReason = Literal["synthetic_root", "empty_source"]
+_RankingExclusionReason = Literal["synthetic_root", "failed_assessment"]
 _WinnerOutcome = Literal[
     "only_eligible_candidate",
     "decisive_component",
@@ -95,8 +95,8 @@ def _ranking_exclusion_reason(
 ) -> _RankingExclusionReason | None:
     if candidate_id == ROOT_ID:
         return "synthetic_root"
-    if not candidate.source.strip():
-        return "empty_source"
+    if not candidate.rollout_eligible:
+        return "failed_assessment"
     return None
 
 
@@ -254,7 +254,7 @@ def should_stop(
 ) -> str | None:
     """Check termination conditions. Returns stop reason or None."""
     for cand in candidates.values():
-        if cand.heuristic == 1.0:
+        if cand.rollout_eligible and cand.heuristic == 1.0:
             return f"success: candidate {cand.id} achieved H=1.0"
     if iteration >= max_refinements:
         return f"budget exhausted after {max_refinements} refinements"
@@ -288,6 +288,8 @@ def synthesize(
     store = ArtifactStore(root=artifact_root, run_id=run_id)
     rng = random.Random(seed)
     max_refinements = refinements if refinements is not None else profile.refinements
+    initial_provider_calls = refiner.model_call_count
+    initial_attempted_refinements = refiner.logical_refinement_count
     policy_executor = PolicyExecutor(
         timeout=execution_timeout,
         max_source_size=max_source_size,
@@ -351,10 +353,10 @@ def synthesize(
     store.write_candidate(ROOT_ID, ROOT_SOURCE)
 
     stop_reason: str | None = None
-    model_call_count = 0
-    logical_refinement_count = 0
+    provider_calls = 0
+    attempted_refinements = 0
 
-    def _evaluated_candidates() -> dict[str, Candidate]:
+    def _eligible_candidates() -> dict[str, Candidate]:
         """Return candidates eligible for selection and final ranking."""
         return {
             candidate_id: candidate
@@ -367,13 +369,9 @@ def synthesize(
         if stop_reason:
             break
 
-        pool = _evaluated_candidates()
+        pool = _eligible_candidates()
         if not pool:
-            if iteration == 1:
-                pool = candidates
-            else:
-                stop_reason = "no evaluated candidates to select"
-                break
+            pool = {ROOT_ID: root}
 
         logger.info(
             "Iteration %d/%d — selecting from %d candidate(s)",
@@ -443,49 +441,38 @@ def synthesize(
                     store.write_refinement(iteration, parent_id, refine_legal_action, trace)
                 except Exception:
                     logger.warning("Failed to persist refinement trace", exc_info=True)
-        model_call_count = refiner.model_call_count
-        logical_refinement_count = refiner.logical_refinement_count
+        provider_calls = refiner.model_call_count - initial_provider_calls
+        attempted_refinements = refiner.logical_refinement_count - initial_attempted_refinements
+        source = refine_result.source
+        accepted = (
+            refine_result.success
+            and refine_result.generation_succeeded
+            and refine_result.contract_valid
+            and source is not None
+        )
 
         store.write_event(
             Event(
                 iteration=iteration,
                 event_type="refine",
-                candidate_id=child_id,
+                candidate_id=child_id if accepted else None,
                 parent_id=parent_id,
-                metadata={"success": refine_result.success},
+                metadata={
+                    "success": accepted,
+                    "generation_succeeded": refine_result.generation_succeeded,
+                    "contract_valid": refine_result.contract_valid,
+                },
             )
         )
 
-        logger.info(
-            "Refinement %s — candidate %s",
-            "succeeded" if refine_result.success else "failed",
-            child_id,
-        )
-        if not refine_result.success or not refine_result.source:
-            assessment = failed_assessment(refine_result.error_details or "Refinement failed")
-            child = Candidate(
-                id=child_id,
-                parent_id=parent_id,
-                source=refine_result.source or "",
-                heuristic=0.0,
-                terminal_reward=0.0,
-                legal_action_count=0,
-                termination_reason=TerminationReason.CONTRACT_FAILURE,
-                failure_summary=assessment.failure_summary,
-                last_observation=None,
-                iteration=iteration,
-                expansion_count=0,
-                failure_count=assessment.failure_count,
-                episode_count=0,
-                assessment=assessment,
-            )
-            candidates[child_id] = child
-            store.write_candidate(child_id, child.source)
-            store.write_assessment(child_id, assessment)
+        if not accepted:
+            logger.info("Refinement failed — %s", refine_result.error_details)
             continue
 
-        store.write_candidate(child_id, refine_result.source)
-        assessment = assessor.assess(refine_result.source, episode_seeds)
+        logger.info("Refinement succeeded — candidate %s", child_id)
+        assert source is not None
+        store.write_candidate(child_id, source)
+        assessment = assessor.assess(source, episode_seeds)
 
         logger.info(
             "Evaluation: candidate %s H=%.3f reward=%.3f (%s)",
@@ -498,7 +485,7 @@ def synthesize(
         child = Candidate(
             id=child_id,
             parent_id=parent_id,
-            source=refine_result.source,
+            source=source,
             heuristic=assessment.heuristic,
             terminal_reward=assessment.terminal_reward,
             legal_action_count=assessment.legal_action_count,
@@ -510,6 +497,7 @@ def synthesize(
             failure_count=assessment.failure_count,
             episode_count=len(assessment.episodes),
             assessment=assessment,
+            rollout_eligible=assessment_is_rollout_eligible(assessment),
         )
         candidates[child_id] = child
         store.write_assessment(child_id, assessment)
@@ -526,6 +514,7 @@ def synthesize(
                     "legal_action_count": assessment.legal_action_count,
                     "failure_count": assessment.failure_count,
                     "episode_count": len(assessment.episodes),
+                    "rollout_eligible": child.rollout_eligible,
                     "termination_reason": (
                         assessment.termination_reason.value
                         if assessment.termination_reason
@@ -538,8 +527,8 @@ def synthesize(
     if not stop_reason:
         stop_reason = should_stop(candidates, max_refinements, max_refinements) or "completed"
 
-    evaluated_candidates = _evaluated_candidates()
-    ordered_candidate_ids = rank_candidates(evaluated_candidates)
+    eligible_candidates = _eligible_candidates()
+    ordered_candidate_ids = rank_candidates(eligible_candidates)
     best_id = ordered_candidate_ids[0] if ordered_candidate_ids else None
 
     logger.info("Stop reason: %s", stop_reason)
@@ -562,11 +551,12 @@ def synthesize(
                 "expansion_count": c.expansion_count,
                 "failure_count": c.failure_count,
                 "episode_count": c.episode_count,
+                "rollout_eligible": c.rollout_eligible,
                 "ranking": _candidate_ranking_artifact(cid, c),
             }
             for cid, c in candidates.items()
         },
-        "ranking": _ranking_artifact(evaluated_candidates, ordered_candidate_ids),
+        "ranking": _ranking_artifact(eligible_candidates, ordered_candidate_ids),
         "best_candidate_id": best_id,
     }
     store.write_tree(tree_data)
@@ -577,10 +567,10 @@ def synthesize(
         "stop_reason": stop_reason,
         "best_candidate_id": best_id,
         "total_candidates": len(candidates),
-        "iterations_used": len(candidates) - 1,
+        "attempted_refinements": attempted_refinements,
+        "successful_tree_nodes": len(candidates) - 1,
+        "provider_calls": provider_calls,
         "profile": profile.value,
-        "model_call_count": model_call_count,
-        "logical_refinement_count": logical_refinement_count,
     }
     store.write_synthesis_summary(summary)
 

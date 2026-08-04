@@ -33,6 +33,11 @@ _ACTIONABILITY = {
     TerminationReason.ENVIRONMENT_TERMINATION: 4,
 }
 
+_ROLLOUT_FAILURE_REASONS = {
+    TerminationReason.CONTRACT_FAILURE,
+    TerminationReason.EXECUTION_FAILURE,
+}
+
 
 def generate_episode_seeds(base_seed: int, count: int, excluded: Collection[int] = ()) -> list[int]:
     """Generate a reproducible ordered list of unique 32-bit episode seeds."""
@@ -80,8 +85,7 @@ class CandidateAssessor:
             terminal_reward=fmean(episode.rollout.terminal_reward for episode in episodes),
             legal_action_count=sum(episode.rollout.legal_action_count for episode in episodes),
             failure_count=sum(
-                episode.rollout.termination_reason
-                in (TerminationReason.EXECUTION_FAILURE, TerminationReason.CONTRACT_FAILURE)
+                episode.rollout.termination_reason in _ROLLOUT_FAILURE_REASONS
                 for episode in episodes
             ),
             termination_counts=dict(counts),
@@ -90,6 +94,14 @@ class CandidateAssessor:
             failure_summary=representative.failure_summary,
             last_observation=representative.last_observation,
         )
+
+
+def assessment_is_rollout_eligible(assessment: CandidateAssessment) -> bool:
+    """Return whether at least one assessed episode completed policy execution."""
+    return any(
+        episode.rollout.termination_reason not in _ROLLOUT_FAILURE_REASONS
+        for episode in assessment.episodes
+    )
 
 
 def failed_assessment(error: str) -> CandidateAssessment:

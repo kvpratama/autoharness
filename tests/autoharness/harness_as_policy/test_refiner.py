@@ -263,6 +263,8 @@ def test_refiner_extracts_only_fenced_source_after_visible_analysis() -> None:
 
     assert result.success
     assert result.source == COMPLETE_SOURCE
+    assert result.generation_succeeded is True
+    assert result.contract_valid is True
 
 
 def test_extract_source_returns_final_fenced_python_block() -> None:
@@ -356,6 +358,8 @@ def test_refiner_malformed_response() -> None:
         refine_legal_action=True,
     )
     assert not result.success
+    assert result.generation_succeeded is False
+    assert result.contract_valid is False
 
 
 def test_refiner_model_call_count() -> None:
@@ -638,12 +642,14 @@ def test_refiner_rejects_response_missing_legality_checker() -> None:
     )
 
     assert not result.success
+    assert result.generation_succeeded is True
+    assert result.contract_valid is False
+    assert result.source is None
     assert result.error_details == "Model response did not contain both required policy functions"
 
 
-def test_refiner_propagates_programming_error() -> None:
-    """Refiner propagates standard exceptions (like ValueError) immediately."""
-    import pytest
+def test_refiner_returns_non_transient_provider_error() -> None:
+    """A provider exception fails one refinement without escaping the boundary."""
 
     class FailModel(BaseChatModel):
         def _generate(
@@ -661,29 +667,33 @@ def test_refiner_propagates_programming_error() -> None:
 
     model = FailModel()
     refiner = Refiner(model=model)
-    with pytest.raises(ValueError, match="Programming error"):
-        refiner.refine(
-            rules="Rules",
-            action_format="[A C]",
-            parent_source="old",
-            parent_heuristic=0.0,
-            parent_reward=0.0,
-            parent_legal_actions=0,
-            parent_status="contract_failure",
-            trajectory="",
-            refine_legal_action=True,
-        )
+    result = refiner.refine(
+        rules="Rules",
+        action_format="[A C]",
+        parent_source="old",
+        parent_heuristic=0.0,
+        parent_reward=0.0,
+        parent_legal_actions=0,
+        parent_status="contract_failure",
+        trajectory="",
+        refine_legal_action=True,
+    )
+
+    assert result.success is False
+    assert result.generation_succeeded is False
+    assert result.contract_valid is False
+    assert result.error_details == "Programming error"
     assert refiner.model_call_count == 1
+    assert refiner.logical_refinement_count == 1
     assert refiner.last_trace is not None
     assert refiner.last_trace.outcome == "provider_error"
     assert refiner.last_trace.invocations[0].error_type == "ValueError"
 
 
-def test_refiner_propagates_openai_auth_error() -> None:
-    """Refiner propagates non-transient provider exceptions immediately."""
+def test_refiner_returns_openai_auth_error() -> None:
+    """A non-transient authentication error fails one refinement attempt."""
     import httpx
     import openai
-    import pytest
 
     class AuthFailModel(BaseChatModel):
         def _generate(
@@ -703,18 +713,21 @@ def test_refiner_propagates_openai_auth_error() -> None:
 
     model = AuthFailModel()
     refiner = Refiner(model=model)
-    with pytest.raises(openai.AuthenticationError, match="Auth failed"):
-        refiner.refine(
-            rules="Rules",
-            action_format="[A C]",
-            parent_source="old",
-            parent_heuristic=0.0,
-            parent_reward=0.0,
-            parent_legal_actions=0,
-            parent_status="contract_failure",
-            trajectory="",
-            refine_legal_action=True,
-        )
+    result = refiner.refine(
+        rules="Rules",
+        action_format="[A C]",
+        parent_source="old",
+        parent_heuristic=0.0,
+        parent_reward=0.0,
+        parent_legal_actions=0,
+        parent_status="contract_failure",
+        trajectory="",
+        refine_legal_action=True,
+    )
+
+    assert result.success is False
+    assert result.generation_succeeded is False
+    assert result.contract_valid is False
     assert refiner.model_call_count == 1
 
 
@@ -765,7 +778,7 @@ def test_refiner_retries_transient_openai_error() -> None:
     assert refiner.model_call_count == 2
 
 
-def test_refiner_records_and_propagates_context_limit_without_shortening_prompt() -> None:
+def test_refiner_records_context_limit_without_shortening_prompt() -> None:
     class ContextLimitModel(BaseChatModel):
         def _generate(
             self,
@@ -783,19 +796,20 @@ def test_refiner_records_and_propagates_context_limit_without_shortening_prompt(
     trajectory = "unshortened-trajectory-marker" * 100
     refiner = Refiner(model=ContextLimitModel())
 
-    with pytest.raises(ValueError, match="maximum context length exceeded"):
-        refiner.refine(
-            rules="Rules",
-            action_format="[A C]",
-            parent_source="old",
-            parent_heuristic=0.0,
-            parent_reward=0.0,
-            parent_legal_actions=0,
-            parent_status="unknown",
-            trajectory=trajectory,
-            refine_legal_action=True,
-        )
+    result = refiner.refine(
+        rules="Rules",
+        action_format="[A C]",
+        parent_source="old",
+        parent_heuristic=0.0,
+        parent_reward=0.0,
+        parent_legal_actions=0,
+        parent_status="unknown",
+        trajectory=trajectory,
+        refine_legal_action=True,
+    )
 
+    assert result.success is False
+    assert result.error_details == "maximum context length exceeded"
     assert refiner.model_call_count == 1
     assert refiner.last_trace is not None
     assert trajectory in refiner.last_trace.prompt

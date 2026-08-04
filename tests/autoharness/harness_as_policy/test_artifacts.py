@@ -142,6 +142,8 @@ def test_write_refinement_preserves_prompt_provider_attempts_and_source(
         ],
         extracted_source="def propose_action(): pass",
         outcome=RefinementOutcome.SUCCESS,
+        generation_succeeded=True,
+        contract_valid=True,
     )
 
     store.write_refinement(1, "000", True, trace)
@@ -156,6 +158,8 @@ def test_write_refinement_preserves_prompt_provider_attempts_and_source(
     assert data["invocations"][1]["content"]["text"] == "raw response"
     assert data["extracted_source"] == "def propose_action(): pass"
     assert data["outcome"] == "success"
+    assert data["generation_succeeded"] is True
+    assert data["contract_valid"] is True
 
 
 def test_write_failed_assessment_has_no_episodes(store: ArtifactStore) -> None:

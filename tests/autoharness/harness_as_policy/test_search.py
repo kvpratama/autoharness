@@ -21,7 +21,6 @@ from autoharness.harness_as_policy.models import (
     TerminationReason,
 )
 from autoharness.harness_as_policy.refiner import (
-    RefinerProtocol,
     RefinerResult,
 )
 from autoharness.harness_as_policy.search import (
@@ -321,6 +320,7 @@ def test_should_stop_success() -> None:
             failure_summary=None,
             iteration=0,
             expansion_count=0,
+            rollout_eligible=True,
         ),
     }
     reason = should_stop(candidates, iteration=1, max_refinements=8)
@@ -348,6 +348,23 @@ def test_should_stop_strict_equality() -> None:
     assert reason is None
 
 
+def test_should_stop_ignores_ineligible_perfect_candidate() -> None:
+    candidate = Candidate(
+        id="001",
+        parent_id="000",
+        source="policy",
+        heuristic=1.0,
+        terminal_reward=1.0,
+        legal_action_count=1,
+        termination_reason=TerminationReason.CONTRACT_FAILURE,
+        failure_summary="invalid",
+        iteration=1,
+        rollout_eligible=False,
+    )
+
+    assert should_stop({"001": candidate}, iteration=1, max_refinements=2) is None
+
+
 def test_should_stop_budget_exhausted() -> None:
     """Should stop when iteration reaches max_refinements."""
     reason = should_stop({}, iteration=8, max_refinements=8)
@@ -361,33 +378,110 @@ def test_should_stop_not_yet() -> None:
     assert reason is None
 
 
-def test_synthesize_empty_policies() -> None:
-    """Blank policies remain in the tree but are excluded from final ranking."""
-    with tempfile.TemporaryDirectory() as tmpdir:
-        refiner: RefinerProtocol = FakeRefiner(responses=["   "])
-        result = synthesize(
-            adapter=FakeAdapter(),
-            profile=Profile.SMOKE,
-            refiner=refiner,
-            artifact_root=Path(tmpdir),
-            seed=42,
-        )
-        tree_path = Path(tmpdir) / result["run_id"] / "tree.json"
-        tree = json.loads(tree_path.read_text())
+def test_blank_refinement_does_not_create_node_and_search_retries_root(tmp_path: Path) -> None:
+    refiner = FakeRefiner([None, ACCEPTED_BY_CHECKER_SOURCE])
 
-    assert tree["candidates"]["000"]["ranking"] == {
-        "eligible": False,
-        "exclusion_reason": "synthetic_root",
-        "components": None,
+    result = synthesize(
+        adapter=FakeAdapter(),
+        profile=Profile.SMOKE,
+        refiner=refiner,
+        artifact_root=tmp_path,
+        refinements=2,
+    )
+
+    run_dir = tmp_path / result["run_id"]
+    tree = json.loads((run_dir / "tree.json").read_text())
+    events = [json.loads(line) for line in (run_dir / "events.jsonl").read_text().splitlines()]
+    failed_refinement = next(
+        event for event in events if event["event_type"] == "refine" and event["iteration"] == 1
+    )
+
+    assert set(tree["candidates"]) == {"000", "002"}
+    assert tree["candidates"]["002"]["parent_id"] == "000"
+    assert tree["best_candidate_id"] == "002"
+    assert not (run_dir / "candidates" / "001.py").exists()
+    assert not (run_dir / "rollouts" / "001.json").exists()
+    assert (run_dir / "candidates" / "002.py").exists()
+    assert (run_dir / "rollouts" / "002.json").exists()
+    assert (run_dir / "best.py").exists()
+    assert [event["candidate_id"] for event in events if event["event_type"] == "select"] == [
+        "000",
+        "000",
+    ]
+    assert failed_refinement["candidate_id"] is None
+    assert failed_refinement["metadata"] == {
+        "success": False,
+        "generation_succeeded": False,
+        "contract_valid": False,
     }
+    assert result["attempted_refinements"] == 2
+    assert result["successful_tree_nodes"] == 1
+    assert result["provider_calls"] == 2
+    assert "iterations_used" not in result
+    assert "logical_refinement_count" not in result
+    assert "model_call_count" not in result
+
+    summary = json.loads((run_dir / "synthesis-summary.json").read_text())
+    assert summary["attempted_refinements"] == 2
+    assert summary["successful_tree_nodes"] == 1
+    assert summary["provider_calls"] == 2
+
+
+def test_all_failed_assessment_cannot_be_selected_ranked_or_published(tmp_path: Path) -> None:
+    execution_failing_source = """def propose_action(observation: str) -> str:
+    raise RuntimeError("failing policy")
+
+def is_legal_action(observation: str, action: str) -> bool:
+    return True
+"""
+    result = synthesize(
+        adapter=FakeAdapter(),
+        profile=Profile.SMOKE,
+        refiner=FakeRefiner([execution_failing_source, ACCEPTED_BY_CHECKER_SOURCE]),
+        artifact_root=tmp_path,
+        refinements=2,
+    )
+
+    run_dir = tmp_path / result["run_id"]
+    tree = json.loads((run_dir / "tree.json").read_text())
+    events = [json.loads(line) for line in (run_dir / "events.jsonl").read_text().splitlines()]
+
+    assert tree["candidates"]["001"]["rollout_eligible"] is False
     assert tree["candidates"]["001"]["ranking"] == {
         "eligible": False,
-        "exclusion_reason": "empty_source",
+        "exclusion_reason": "failed_assessment",
         "components": None,
     }
+    assert tree["candidates"]["002"]["parent_id"] == "000"
+    assert tree["ranking"]["ordered_candidate_ids"] == ["002"]
+    assert tree["best_candidate_id"] == "002"
+    assert (run_dir / "best.py").read_text() == ACCEPTED_BY_CHECKER_SOURCE
+    assert [event["candidate_id"] for event in events if event["event_type"] == "select"] == [
+        "000",
+        "000",
+    ]
+
+
+def test_all_failed_assessment_does_not_create_best_policy(tmp_path: Path) -> None:
+    execution_failing_source = """def propose_action(observation: str) -> str:
+    raise RuntimeError("failing policy")
+
+def is_legal_action(observation: str, action: str) -> bool:
+    return True
+"""
+    result = synthesize(
+        adapter=FakeAdapter(),
+        profile=Profile.SMOKE,
+        refiner=FakeRefiner([execution_failing_source]),
+        artifact_root=tmp_path,
+        refinements=1,
+    )
+
+    run_dir = tmp_path / result["run_id"]
+    tree = json.loads((run_dir / "tree.json").read_text())
     assert tree["ranking"]["ordered_candidate_ids"] == []
-    assert tree["ranking"]["winner_explanation"] is None
     assert tree["best_candidate_id"] is None
+    assert not (run_dir / "best.py").exists()
 
 
 def test_synthesize_persists_order_matching_find_best_candidate() -> None:
@@ -425,6 +519,7 @@ def test_synthesize_persists_order_matching_find_best_candidate() -> None:
             expansion_count=data["expansion_count"],
             failure_count=data["failure_count"],
             episode_count=data["episode_count"],
+            rollout_eligible=data["rollout_eligible"],
         )
         for candidate_id, data in tree["candidates"].items()
         if data["ranking"]["eligible"]
@@ -453,23 +548,19 @@ def test_synthesize_persists_order_matching_find_best_candidate() -> None:
     }
     assert tree["candidates"]["002"]["failure_count"] == 2
     assert tree["candidates"]["002"]["episode_count"] == 2
-    assert tree["candidates"]["002"]["ranking"]["components"] == {
-        "heuristic": 0.0,
-        "reward": 0.0,
-        "legal_actions": 0,
-        "failures": 2,
-        "iteration": 2,
+    assert tree["candidates"]["002"]["ranking"] == {
+        "eligible": False,
+        "exclusion_reason": "failed_assessment",
+        "components": None,
     }
-    assert reconstructed_candidates["002"].failure_count == 2
-    assert reconstructed_candidates["002"].episode_count == 2
     assert tree["ranking"]["winner_explanation"] == {
         "winner_id": "001",
-        "runner_up_id": "002",
-        "outcome": "decisive_component",
+        "runner_up_id": None,
+        "outcome": "only_eligible_candidate",
         "tied_components": [],
-        "decisive_component": "heuristic",
-        "winner_value": 0.5,
-        "runner_up_value": 0.0,
+        "decisive_component": None,
+        "winner_value": None,
+        "runner_up_value": None,
     }
 
 
@@ -696,9 +787,61 @@ class FakeRefiner:
             resp = self._responses.pop(0)
             if resp:
                 self._last_trace.extracted_source = resp
-                return RefinerResult(success=True, source=resp)
+                self._last_trace.generation_succeeded = True
+                self._last_trace.contract_valid = True
+                return RefinerResult(
+                    success=True,
+                    source=resp,
+                    generation_succeeded=True,
+                    contract_valid=True,
+                )
         self._last_trace.outcome = RefinementOutcome.INVALID_RESPONSE
         return RefinerResult(success=False, source=None)
+
+
+class RetriedFakeRefiner(FakeRefiner):
+    """Fake one internal provider retry per logical refinement."""
+
+    @property
+    def model_call_count(self) -> int:
+        return self._call_count * 2
+
+
+class InconsistentFakeRefiner(FakeRefiner):
+    """Fake a protocol implementation with contradictory success flags."""
+
+    def refine(
+        self,
+        rules: str = "",
+        action_format: str = "",
+        parent_source: str = "",
+        parent_heuristic: float = 0.0,
+        parent_reward: float = 0.0,
+        parent_legal_actions: int = 0,
+        parent_status: str = "",
+        trajectory: str = "",
+        env_name: str = "",
+        *,
+        refine_legal_action: bool,
+    ) -> RefinerResult:
+        result = super().refine(
+            rules=rules,
+            action_format=action_format,
+            parent_source=parent_source,
+            parent_heuristic=parent_heuristic,
+            parent_reward=parent_reward,
+            parent_legal_actions=parent_legal_actions,
+            parent_status=parent_status,
+            trajectory=trajectory,
+            env_name=env_name,
+            refine_legal_action=refine_legal_action,
+        )
+        return RefinerResult(
+            success=True,
+            source=result.source,
+            generation_succeeded=True,
+            contract_valid=False,
+        )
 
 
 REJECTED_BY_CHECKER_SOURCE = """def propose_action(observation: str) -> str:
@@ -714,6 +857,55 @@ ACCEPTED_BY_CHECKER_SOURCE = """def propose_action(observation: str) -> str:
 def is_legal_action(observation: str, action: str) -> bool:
     return True
 """
+
+
+def test_synthesis_reports_provider_retries_separately(tmp_path: Path) -> None:
+    result = synthesize(
+        adapter=FakeAdapter(),
+        profile=Profile.SMOKE,
+        refiner=RetriedFakeRefiner([ACCEPTED_BY_CHECKER_SOURCE]),
+        artifact_root=tmp_path,
+        refinements=1,
+    )
+
+    assert result["attempted_refinements"] == 1
+    assert result["successful_tree_nodes"] == 1
+    assert result["provider_calls"] == 2
+
+
+def test_synthesis_reports_run_local_counts_when_refiner_is_reused(tmp_path: Path) -> None:
+    refiner = FakeRefiner([ACCEPTED_BY_CHECKER_SOURCE, ACCEPTED_BY_CHECKER_SOURCE])
+    refiner.refine(refine_legal_action=True)
+
+    result = synthesize(
+        adapter=FakeAdapter(),
+        profile=Profile.SMOKE,
+        refiner=refiner,
+        artifact_root=tmp_path,
+        refinements=1,
+    )
+
+    assert result["attempted_refinements"] == 1
+    assert result["provider_calls"] == 1
+
+
+def test_inconsistent_refiner_success_does_not_reference_candidate(tmp_path: Path) -> None:
+    result = synthesize(
+        adapter=FakeAdapter(),
+        profile=Profile.SMOKE,
+        refiner=InconsistentFakeRefiner([ACCEPTED_BY_CHECKER_SOURCE]),
+        artifact_root=tmp_path,
+        refinements=1,
+    )
+
+    run_dir = tmp_path / result["run_id"]
+    tree = json.loads((run_dir / "tree.json").read_text())
+    events = [json.loads(line) for line in (run_dir / "events.jsonl").read_text().splitlines()]
+    refinement = next(event for event in events if event["event_type"] == "refine")
+
+    assert set(tree["candidates"]) == {"000"}
+    assert refinement["candidate_id"] is None
+    assert refinement["metadata"]["success"] is False
 
 
 def test_synthesize_reuses_shared_environment_seeds_for_every_candidate(tmp_path: Path) -> None:
@@ -921,7 +1113,7 @@ def test_refinement_persistence_failure_does_not_abort_successful_run(
         refinements=1,
     )
 
-    assert result["logical_refinement_count"] == 1
+    assert result["attempted_refinements"] == 1
 
 
 def test_refinement_persistence_failure_does_not_replace_refiner_error(

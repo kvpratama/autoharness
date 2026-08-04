@@ -86,10 +86,10 @@ class SynthesisResult(TypedDict):
     stop_reason: str
     best_candidate_id: str | None
     total_candidates: int
-    iterations_used: int
+    attempted_refinements: int
+    successful_tree_nodes: int
+    provider_calls: int
     profile: str
-    model_call_count: int
-    logical_refinement_count: int
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -264,7 +264,9 @@ def synthesize_cmd(
     print(f"Stop reason: {result.get('stop_reason', 'unknown')}")
     print(f"Best candidate: {result.get('best_candidate_id', 'none')}")
     print(f"Total candidates: {result.get('total_candidates', 0)}")
-    print(f"Model calls: {result.get('model_call_count', 0)}")
+    print(f"Attempted refinements: {result.get('attempted_refinements', 0)}")
+    print(f"Successful tree nodes: {result.get('successful_tree_nodes', 0)}")
+    print(f"Provider calls: {result.get('provider_calls', 0)}")
     return cast(SynthesisResult, result)
 
 

@@ -6,6 +6,7 @@ import pytest
 
 from autoharness.harness_as_policy.assessment import (
     CandidateAssessor,
+    assessment_is_rollout_eligible,
     build_assessment_trajectory,
     build_initial_trajectory,
     generate_episode_seeds,
@@ -64,6 +65,37 @@ def test_assessor_runs_all_shared_seeds_and_aggregates() -> None:
     }
     assert assessment.representative_episode_index == 2
     assert assessment.termination_reason == TerminationReason.EXECUTION_FAILURE
+
+
+@pytest.mark.parametrize(
+    "reasons",
+    [
+        [TerminationReason.CONTRACT_FAILURE],
+        [TerminationReason.EXECUTION_FAILURE],
+        [TerminationReason.CONTRACT_FAILURE, TerminationReason.EXECUTION_FAILURE],
+    ],
+)
+def test_assessment_with_only_contract_or_execution_failures_is_ineligible(
+    reasons: list[TerminationReason],
+) -> None:
+    assessment = CandidateAssessor(
+        ScriptedEvaluator([rollout(0.0, 0.0, reason) for reason in reasons])
+    ).assess("source", list(range(len(reasons))))
+
+    assert assessment_is_rollout_eligible(assessment) is False
+
+
+def test_mixed_assessment_with_one_completed_rollout_is_eligible() -> None:
+    assessment = CandidateAssessor(
+        ScriptedEvaluator(
+            [
+                rollout(0.0, 0.0, TerminationReason.EXECUTION_FAILURE),
+                rollout(0.5, 0.0, TerminationReason.STEP_LIMIT),
+            ]
+        )
+    ).assess("source", [1, 2])
+
+    assert assessment_is_rollout_eligible(assessment) is True
 
 
 def test_representative_ties_use_actionability_then_seed_order() -> None:

@@ -136,6 +136,8 @@ class RefinerResult:
     success: bool
     source: str | None
     error_details: str | None = None
+    generation_succeeded: bool = False
+    contract_valid: bool = False
 
 
 REFINER_SYSTEM_PROMPT = (
@@ -386,22 +388,34 @@ class Refiner:
                     continue
                 trace.outcome = RefinementOutcome.PROVIDER_ERROR
                 trace.error_details = str(e)
-                raise
+                return RefinerResult(
+                    success=False,
+                    source=None,
+                    error_details=trace.error_details,
+                )
             content = _normalize_content(response)
             trace.invocations.append(
                 ProviderInvocation(content=response.content, normalized_text=content)
             )
             source = _extract_source(content)
             trace.extracted_source = source
-            if source and _has_policy_contract(source):
+            trace.generation_succeeded = source is not None
+            trace.contract_valid = source is not None and _has_policy_contract(source)
+            if trace.contract_valid:
                 trace.outcome = RefinementOutcome.SUCCESS
-                return RefinerResult(success=True, source=source)
+                return RefinerResult(
+                    success=True,
+                    source=source,
+                    generation_succeeded=True,
+                    contract_valid=True,
+                )
             trace.outcome = RefinementOutcome.INVALID_RESPONSE
             trace.error_details = "Model response did not contain both required policy functions"
             return RefinerResult(
                 success=False,
                 source=None,
                 error_details="Model response did not contain both required policy functions",
+                generation_succeeded=trace.generation_succeeded,
             )
         trace.outcome = RefinementOutcome.TRANSPORT_FAILURE
         trace.error_details = f"Model transport failure after 2 attempts: {last_error}"

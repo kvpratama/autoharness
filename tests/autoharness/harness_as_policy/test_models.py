@@ -199,6 +199,7 @@ def test_action_attempt_requires_keyword_arguments() -> None:
         "terminated",
         "feedback",
         "error_phase",
+        "policy_seed",
     }
     assert all(parameter.kind is Parameter.KEYWORD_ONLY for parameter in parameters)
 

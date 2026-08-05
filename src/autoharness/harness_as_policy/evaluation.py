@@ -12,7 +12,7 @@ from typing import cast
 from autoharness.harness_as_policy.assessment import generate_episode_seeds
 from autoharness.harness_as_policy.environments.base import EnvironmentAdapter
 from autoharness.harness_as_policy.environments.registry import EnvironmentSpec
-from autoharness.harness_as_policy.executor import PolicyExecutor
+from autoharness.harness_as_policy.executor import PolicyExecutor, policy_randomness_metadata
 from autoharness.harness_as_policy.models import TerminationReason
 from autoharness.harness_as_policy.rollout import ActionProvider, ExecutorProtocol, RolloutEvaluator
 
@@ -130,6 +130,8 @@ class EvaluationResult:
     failure_summary: str | None
     latency: float
     execution_failure: bool
+    policy_invocation_count: int = 0
+    policy_seeds: tuple[int, ...] = ()
 
     @classmethod
     def from_execution_failure(
@@ -154,6 +156,8 @@ class EvaluationResult:
             failure_summary=failure_summary,
             latency=latency,
             execution_failure=True,
+            policy_invocation_count=0,
+            policy_seeds=(),
         )
 
 
@@ -191,6 +195,7 @@ class EvaluationReport:
     aggregate: EvaluationAggregate
     usage: EvaluationUsage | None = None
     model_id: str | None = None
+    policy_randomness: dict[str, object] | None = None
 
     @classmethod
     def create(
@@ -200,6 +205,7 @@ class EvaluationReport:
         results: list[EvaluationResult],
         usage: EvaluationUsage | None = None,
         model_id: str | None = None,
+        policy_randomness: dict[str, object] | None = None,
     ) -> EvaluationReport:
         """Validate ordered results and calculate canonical metrics."""
         if len(results) != protocol.episode_count:
@@ -210,6 +216,18 @@ class EvaluationReport:
             raise ValueError("Evaluation result seeds must match protocol order")
         if any(result.env_id != protocol.env_id for result in results):
             raise ValueError("Evaluation result environment must match protocol")
+        if policy_kind == "generated-policy":
+            for result in results:
+                if len(result.policy_seeds) != result.policy_invocation_count:
+                    raise ValueError(
+                        "EvaluationResult policy_seeds length must match policy_invocation_count"
+                    )
+        else:
+            for result in results:
+                if result.policy_invocation_count != 0 or result.policy_seeds:
+                    raise ValueError(
+                        "Live evaluation results must contain zero policy invocations and seeds"
+                    )
         legal = sum(result.legal_action_count for result in results)
         attempts = sum(result.action_attempt_count for result in results)
         latency = sum(result.latency for result in results)
@@ -223,7 +241,15 @@ class EvaluationReport:
             latency,
             latency / len(results),
         )
-        return cls(policy_kind, protocol, results, aggregate, usage, model_id)
+        return cls(
+            policy_kind,
+            protocol,
+            results,
+            aggregate,
+            usage,
+            model_id,
+            policy_randomness,
+        )
 
     def to_dict(self) -> dict[str, object]:
         """Serialize the complete report as JSON-compatible data."""
@@ -232,12 +258,17 @@ class EvaluationReport:
             reason.value: count for reason, count in self.aggregate.termination_counts.items()
         }
         results = [
-            asdict(result) | {"termination_reason": result.termination_reason.value}
+            asdict(result)
+            | {
+                "termination_reason": result.termination_reason.value,
+                "policy_seeds": list(result.policy_seeds),
+            }
             for result in self.results
         ]
         data: dict[str, object] = {
-            "schema_version": 1,
+            "schema_version": 2,
             "policy_kind": self.policy_kind,
+            "policy_randomness": self.policy_randomness,
             "protocol": self.protocol.to_dict(),
             "aggregate": aggregate,
             "results": results,
@@ -272,6 +303,8 @@ def evaluate_action_provider_on_env(
         time.monotonic() - start,
         rollout.termination_reason
         in (TerminationReason.EXECUTION_FAILURE, TerminationReason.CONTRACT_FAILURE),
+        policy_invocation_count=0,
+        policy_seeds=(),
     )
 
 
@@ -283,12 +316,28 @@ def evaluate_policy_on_env(
     optimal_steps: int = 0,
 ) -> EvaluationResult:
     """Evaluate generated policy code for one seeded episode."""
-    return evaluate_action_provider_on_env(
-        adapter,
-        lambda observation: executor.execute(source, observation),
-        seed,
-        optimal_steps,
-        True,
+    start = time.monotonic()
+    rollout = RolloutEvaluator(adapter, executor).evaluate(source, seed)
+    return EvaluationResult(
+        seed=seed,
+        env_id=adapter.env_id,
+        solved=rollout.terminal_reward >= 1.0,
+        reward=rollout.terminal_reward,
+        legal_action_count=rollout.legal_action_count,
+        action_attempt_count=rollout.action_attempt_count,
+        steps_used=len(rollout.steps),
+        optimal_steps=optimal_steps or adapter.max_steps,
+        termination_reason=rollout.termination_reason,
+        failure_summary=rollout.failure_summary,
+        latency=time.monotonic() - start,
+        execution_failure=rollout.termination_reason
+        in (TerminationReason.EXECUTION_FAILURE, TerminationReason.CONTRACT_FAILURE),
+        policy_invocation_count=sum(
+            attempt.policy_seed is not None for attempt in rollout.attempts
+        ),
+        policy_seeds=tuple(
+            attempt.policy_seed for attempt in rollout.attempts if attempt.policy_seed is not None
+        ),
     )
 
 
@@ -321,7 +370,9 @@ def evaluate_policy(
         results.append(
             evaluate_policy_on_env(adapter, policy_executor, source, seed, spec.optimal_steps)
         )
-    return EvaluationReport.create("generated-policy", protocol, results)
+    return EvaluationReport.create(
+        "generated-policy", protocol, results, policy_randomness=policy_randomness_metadata()
+    )
 
 
 def format_evaluation_summary(report: EvaluationReport) -> str:

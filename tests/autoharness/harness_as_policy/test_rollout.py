@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+import random
+import textwrap
+from dataclasses import dataclass, field, replace
 
-from autoharness.harness_as_policy.executor import ExecutionResult
+from autoharness.harness_as_policy.executor import ExecutionResult, derive_policy_seed
 from autoharness.harness_as_policy.models import (
     ActionAttempt,
     AttemptErrorPhase,
@@ -19,8 +21,19 @@ class FakeExecutor:
     """Fake executor that returns configured results."""
 
     step_results: list[tuple[str, bool] | ExecutionResult | None] | None = None
+    policy_seeds: list[int] = field(default_factory=list)
 
-    def execute(self, source: str, observation: str) -> ExecutionResult:
+    def begin_session(self, source: str) -> FakeExecutor:
+        return self
+
+    def __enter__(self) -> FakeExecutor:
+        return self
+
+    def __exit__(self, *args: object) -> None:
+        pass
+
+    def execute(self, observation: str, *, policy_seed: int) -> ExecutionResult:
+        self.policy_seeds.append(policy_seed)
         if not self.step_results:
             return ExecutionResult(
                 success=False,
@@ -28,6 +41,7 @@ class FakeExecutor:
                 latency=0.0,
                 failure_type="execution_failure",
                 error_details="fail",
+                policy_seed=policy_seed,
             )
         result = self.step_results.pop(0) if self.step_results else None
         if result is None:
@@ -37,16 +51,16 @@ class FakeExecutor:
                 latency=0.0,
                 failure_type="execution_failure",
                 error_details="fail",
+                policy_seed=policy_seed,
             )
         if isinstance(result, ExecutionResult):
-            return result
+            return replace(result, policy_seed=policy_seed)
         return ExecutionResult(
             success=True,
             output=result[0],
             latency=0.0,
             is_legal_action=result[1],
-            failure_type=None,
-            error_details=None,
+            policy_seed=policy_seed,
         )
 
 
@@ -101,8 +115,11 @@ def test_rollout_records_complete_successful_attempt_sequence() -> None:
     )
     executor = FakeExecutor(step_results=[("[A C]", True), ("[C B]", True)])
 
-    result = RolloutEvaluator(adapter, executor).evaluate("source", seed=9)
+    result = RolloutEvaluator(adapter, executor).evaluate("source", seed=17)
 
+    expected_seeds = [11891538334161795807, 6976715446583647224]
+    assert executor.policy_seeds == expected_seeds
+    assert [attempt.policy_seed for attempt in result.attempts] == expected_seeds
     assert result.attempts == [
         ActionAttempt(
             observation="initial observation",
@@ -114,6 +131,7 @@ def test_rollout_records_complete_successful_attempt_sequence() -> None:
             terminated=False,
             feedback="",
             error_phase=None,
+            policy_seed=11891538334161795807,
         ),
         ActionAttempt(
             observation="board 1",
@@ -125,8 +143,79 @@ def test_rollout_records_complete_successful_attempt_sequence() -> None:
             terminated=True,
             feedback="won",
             error_phase=None,
+            policy_seed=6976715446583647224,
         ),
     ]
+
+
+def test_execution_failure_records_assigned_policy_seed() -> None:
+    executor = FakeExecutor([None])
+    result = RolloutEvaluator(FakeAdapter(), executor).evaluate("source", seed=17)
+    assert executor.policy_seeds == [11891538334161795807]
+    assert result.attempts[0].policy_seed == 11891538334161795807
+
+
+def test_repeatable_complete_trajectory_with_real_executor() -> None:
+    class ThreeStepAdapter(FakeAdapter):
+        def __init__(self) -> None:
+            super().__init__()
+            self.max_steps = 3
+
+    source = textwrap.dedent("""\
+        import random
+
+        def propose_action(observation: str) -> str:
+            return str(random.getrandbits(64))
+
+        def is_legal_action(board: str, action: str) -> bool:
+            return True
+    """)
+
+    first = RolloutEvaluator(ThreeStepAdapter()).evaluate(source, seed=17)
+    second = RolloutEvaluator(ThreeStepAdapter()).evaluate(source, seed=17)
+
+    assert [attempt.action for attempt in first.attempts] == [
+        attempt.action for attempt in second.attempts
+    ]
+    assert [attempt.policy_seed for attempt in first.attempts] == [
+        11891538334161795807,
+        6976715446583647224,
+        derive_policy_seed(17, 2),
+    ]
+    assert first.steps == second.steps
+    assert first.termination_reason == second.termination_reason
+
+    third = RolloutEvaluator(ThreeStepAdapter()).evaluate(source, seed=18)
+    exp_actions_18 = [
+        str(random.Random(derive_policy_seed(18, index)).getrandbits(64)) for index in range(3)
+    ]
+    assert [attempt.action for attempt in third.attempts] == exp_actions_18
+    assert [attempt.action for attempt in first.attempts] != [
+        attempt.action for attempt in third.attempts
+    ]
+
+
+def test_generated_policy_module_state_persists_across_actions() -> None:
+    class ThreeStepAdapter(FakeAdapter):
+        def __init__(self) -> None:
+            super().__init__()
+            self.max_steps = 3
+
+    source = textwrap.dedent("""\
+        counter = 0
+
+        def propose_action(board: str) -> str:
+            global counter
+            counter += 1
+            return str(counter)
+
+        def is_legal_action(board: str, action: str) -> bool:
+            return True
+    """)
+
+    result = RolloutEvaluator(ThreeStepAdapter()).evaluate(source, seed=17)
+
+    assert [attempt.action for attempt in result.attempts] == ["1", "2", "3"]
 
 
 def test_initial_observation_uses_requested_seed_without_policy_execution() -> None:
@@ -141,7 +230,7 @@ def test_initial_observation_uses_requested_seed_without_policy_execution() -> N
 
 
 def test_execution_failure_records_board_and_error_phase() -> None:
-    result = RolloutEvaluator(FakeAdapter(), FakeExecutor([None])).evaluate("source")
+    result = RolloutEvaluator(FakeAdapter(), FakeExecutor([None])).evaluate("source", seed=0)
 
     assert result.attempts == [
         ActionAttempt(
@@ -154,6 +243,7 @@ def test_execution_failure_records_board_and_error_phase() -> None:
             terminated=None,
             feedback="fail",
             error_phase=AttemptErrorPhase.POLICY_EXECUTION,
+            policy_seed=derive_policy_seed(0, 0),
         )
     ]
 
@@ -166,7 +256,9 @@ def test_contract_failure_records_board_and_error_phase() -> None:
         failure_type="contract_failure",
         error_details="propose_action not found",
     )
-    result = RolloutEvaluator(FakeAdapter(), FakeExecutor([contract_err])).evaluate("source")
+    result = RolloutEvaluator(FakeAdapter(), FakeExecutor([contract_err])).evaluate(
+        "source", seed=0
+    )
 
     assert result.termination_reason == TerminationReason.CONTRACT_FAILURE
     assert result.failure_summary == "propose_action not found"
@@ -181,12 +273,15 @@ def test_contract_failure_records_board_and_error_phase() -> None:
             terminated=None,
             feedback="propose_action not found",
             error_phase=AttemptErrorPhase.POLICY_EXECUTION,
+            policy_seed=derive_policy_seed(0, 0),
         )
     ]
 
 
 def test_checker_rejection_records_action_without_environment_result() -> None:
-    result = RolloutEvaluator(FakeAdapter(), FakeExecutor([("[A C]", False)])).evaluate("source")
+    result = RolloutEvaluator(FakeAdapter(), FakeExecutor([("[A C]", False)])).evaluate(
+        "source", seed=0
+    )
 
     attempt = result.attempts[0]
     assert attempt.observation == "initial observation"
@@ -194,11 +289,12 @@ def test_checker_rejection_records_action_without_environment_result() -> None:
     assert attempt.policy_legal is False
     assert attempt.environment_legal is None
     assert attempt.error_phase == AttemptErrorPhase.POLICY_LEGALITY
+    assert attempt.policy_seed == derive_policy_seed(0, 0)
 
 
 def test_environment_rejection_records_result_and_feedback() -> None:
     adapter = FakeAdapter([StepResult("rejected board", "bad", False, 0.0, True, "bad move")])
-    result = RolloutEvaluator(adapter, FakeExecutor([("bad", True)])).evaluate("source")
+    result = RolloutEvaluator(adapter, FakeExecutor([("bad", True)])).evaluate("source", seed=0)
 
     attempt = result.attempts[0]
     assert attempt.policy_legal is True
@@ -206,11 +302,12 @@ def test_environment_rejection_records_result_and_feedback() -> None:
     assert attempt.resulting_observation == "rejected board"
     assert attempt.feedback == "bad move"
     assert attempt.error_phase == AttemptErrorPhase.ENVIRONMENT_STEP
+    assert attempt.policy_seed == derive_policy_seed(0, 0)
 
 
 def test_environment_exception_records_action_and_pre_action_board() -> None:
     adapter = FakeAdapter(step_error=RuntimeError("step exploded"))
-    result = RolloutEvaluator(adapter, FakeExecutor([("[A C]", True)])).evaluate("source")
+    result = RolloutEvaluator(adapter, FakeExecutor([("[A C]", True)])).evaluate("source", seed=0)
 
     assert result.attempts[0] == ActionAttempt(
         observation="initial observation",
@@ -222,6 +319,7 @@ def test_environment_exception_records_action_and_pre_action_board() -> None:
         terminated=None,
         feedback="Environment step failed: step exploded",
         error_phase=AttemptErrorPhase.ENVIRONMENT_STEP,
+        policy_seed=derive_policy_seed(0, 0),
     )
 
 
@@ -257,7 +355,7 @@ def test_rollout_solves_environment() -> None:
     )
     executor = FakeExecutor(step_results=[("[A C]", True), ("[C B]", True), ("[A C]", True)])
     evaluator = RolloutEvaluator(adapter=adapter, executor=executor)
-    result = evaluator.evaluate(source="dummy source")
+    result = evaluator.evaluate(source="dummy source", seed=0)
     assert result.heuristic == 1.0
     assert result.termination_reason == TerminationReason.ENVIRONMENT_TERMINATION
 
@@ -286,7 +384,7 @@ def test_rollout_illegal_action_returns_zero() -> None:
     )
     executor = FakeExecutor(step_results=[("[A C]", True), ("invalid", True)])
     evaluator = RolloutEvaluator(adapter=adapter, executor=executor)
-    result = evaluator.evaluate(source="dummy source")
+    result = evaluator.evaluate(source="dummy source", seed=0)
     assert result.heuristic == 0.0
     assert result.termination_reason == TerminationReason.LEGALITY_DISAGREEMENT
 
@@ -324,7 +422,9 @@ def test_rollout_step_limit_ignores_nonterminal_reward() -> None:
     adapter.max_steps = 3
     executor = FakeExecutor(step_results=[("[A C]", True), ("[C B]", True), ("[A C]", True)])
 
-    result = RolloutEvaluator(adapter=adapter, executor=executor).evaluate(source="dummy source")
+    result = RolloutEvaluator(adapter=adapter, executor=executor).evaluate(
+        source="dummy source", seed=0
+    )
 
     assert result.heuristic == 0.5
     assert result.terminal_reward == 0.0
@@ -347,7 +447,7 @@ def test_rollout_execution_failure() -> None:
     )
     executor = FakeExecutor(step_results=[("[A C]", True), None])
     evaluator = RolloutEvaluator(adapter=adapter, executor=executor)
-    result = evaluator.evaluate(source="dummy source")
+    result = evaluator.evaluate(source="dummy source", seed=0)
     assert result.heuristic == 0.0
     assert result.termination_reason == TerminationReason.EXECUTION_FAILURE
 
@@ -376,7 +476,7 @@ def test_legal_action_count_tracked() -> None:
     )
     executor = FakeExecutor(step_results=[("[A C]", True), ("invalid", True)])
     evaluator = RolloutEvaluator(adapter=adapter, executor=executor)
-    result = evaluator.evaluate(source="dummy source")
+    result = evaluator.evaluate(source="dummy source", seed=0)
     assert result.legal_action_count == 1
 
 
@@ -385,7 +485,7 @@ def test_checker_rejection_stops_before_environment_step() -> None:
     adapter = FakeAdapter()
     executor = FakeExecutor(step_results=[("[A C]", False)])
 
-    result = RolloutEvaluator(adapter=adapter, executor=executor).evaluate("dummy source")
+    result = RolloutEvaluator(adapter=adapter, executor=executor).evaluate("dummy source", seed=0)
 
     assert adapter.step_calls == []
     assert result.steps == []
@@ -413,7 +513,7 @@ def test_checker_environment_legality_disagreement_returns_zero() -> None:
     )
     executor = FakeExecutor(step_results=[("[A C]", True)])
 
-    result = RolloutEvaluator(adapter=adapter, executor=executor).evaluate("dummy source")
+    result = RolloutEvaluator(adapter=adapter, executor=executor).evaluate("dummy source", seed=0)
 
     assert adapter.step_calls == ["[A C]"]
     assert result.heuristic == 0.0
@@ -427,14 +527,16 @@ def test_checker_environment_legality_disagreement_returns_zero() -> None:
 def test_checker_rejection_counts_one_proposed_action_attempt() -> None:
     result = RolloutEvaluator(
         FakeAdapter(), FakeExecutor(step_results=[("[A C]", False)])
-    ).evaluate("source")
+    ).evaluate("source", seed=0)
 
     assert result.action_attempt_count == 1
     assert result.legal_action_count == 0
 
 
 def test_actionless_execution_failure_does_not_count_as_attempt() -> None:
-    result = RolloutEvaluator(FakeAdapter(), FakeExecutor(step_results=[None])).evaluate("source")
+    result = RolloutEvaluator(FakeAdapter(), FakeExecutor(step_results=[None])).evaluate(
+        "source", seed=0
+    )
 
     assert result.action_attempt_count == 0
     assert result.last_observation == "initial observation"

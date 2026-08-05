@@ -25,6 +25,7 @@ from autoharness.harness_as_policy.evaluation import (
     EvaluationReport,
     EvaluationResult,
 )
+from autoharness.harness_as_policy.executor import policy_randomness_metadata
 from autoharness.harness_as_policy.live_policy import LiveActionResult
 from autoharness.harness_as_policy.models import StepResult, TerminationReason
 
@@ -283,17 +284,21 @@ def _write_evaluation_run(
     *,
     env_id: str = "TowerOfHanoi-v0",
     include_training_seeds: bool = True,
+    include_policy_randomness: bool = True,
 ) -> dict[str, object]:
     run_dir.mkdir()
     (run_dir / "best.py").write_text("def propose_action(observation: str) -> str: return '[A C]'")
     config: dict[str, object] = {"env_id": env_id, "environment_seed": 17}
     if include_training_seeds:
         config["training_episode_seeds"] = [11, 22]
+    if include_policy_randomness:
+        config["policy_randomness"] = policy_randomness_metadata()
     (run_dir / "config.json").write_text(json.dumps(config))
     return config
 
 
 def _evaluation_report(protocol: EvaluationProtocol, policy_kind: str) -> EvaluationReport:
+    is_generated = policy_kind == "generated-policy"
     results = [
         EvaluationResult(
             seed=seed,
@@ -308,10 +313,17 @@ def _evaluation_report(protocol: EvaluationProtocol, policy_kind: str) -> Evalua
             failure_summary=None,
             latency=0.01,
             execution_failure=False,
+            policy_invocation_count=1 if is_generated else 0,
+            policy_seeds=(123456,) if is_generated else (),
         )
         for seed in protocol.episode_seeds
     ]
-    return EvaluationReport.create(policy_kind, protocol, results)
+    return EvaluationReport.create(
+        policy_kind,
+        protocol,
+        results,
+        policy_randomness=policy_randomness_metadata() if is_generated else None,
+    )
 
 
 def test_evaluate_cmd_creates_protocol_and_structured_report(tmp_path: Path) -> None:
@@ -393,6 +405,60 @@ def test_evaluate_cmd_rejects_legacy_config_without_training_seeds(
 
     assert evaluate_cmd(run_dir) is None
     assert "training_episode_seeds" in capsys.readouterr().err
+
+
+def test_evaluate_cmd_rejects_config_without_policy_randomness(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    run_dir = tmp_path / "run"
+    _write_evaluation_run(run_dir, include_policy_randomness=False)
+
+    assert evaluate_cmd(run_dir) is None
+    assert "policy_randomness" in capsys.readouterr().err
+
+
+def test_evaluate_cmd_rejects_incompatible_policy_randomness(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    (run_dir / "best.py").write_text("def propose_action(observation: str) -> str: return '[A C]'")
+    stale_metadata = {
+        "seed_derivation": "autoharness-policy-seed-v1",
+        "python_version": "3.99.0",
+    }
+    config: dict[str, object] = {
+        "env_id": "TowerOfHanoi-v0",
+        "environment_seed": 17,
+        "training_episode_seeds": [11, 22],
+        "policy_randomness": stale_metadata,
+    }
+    (run_dir / "config.json").write_text(json.dumps(config))
+
+    assert evaluate_cmd(run_dir) is None
+    assert "policy_randomness" in capsys.readouterr().err
+
+
+def test_evaluate_baseline_cmd_succeeds_without_policy_randomness_in_config(
+    tmp_path: Path,
+) -> None:
+    """evaluate-baseline does not require policy_randomness in config."""
+    run_dir = tmp_path / "run"
+    _write_evaluation_run(run_dir, env_id="Fake-v0", include_policy_randomness=False)
+    adapters: list[FakeBaselineAdapter] = []
+    live_policy = Mock()
+    live_policy.act.return_value = LiveActionResult(
+        action="[A C]", success=True, latency=0.01, model_calls=1
+    )
+
+    with (
+        patch("autoharness.cli.get_environment_spec", return_value=_baseline_spec(adapters)),
+        patch("autoharness.cli.LivePolicy", return_value=live_policy),
+    ):
+        report = evaluate_baseline_cmd(run_dir, "fake:model")
+
+    assert report is not None
+    assert len(report.results) == 20
 
 
 def _baseline_spec(adapters: list[FakeBaselineAdapter]) -> EnvironmentSpec:

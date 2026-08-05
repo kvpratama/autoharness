@@ -19,7 +19,7 @@ from autoharness.harness_as_policy.assessment import (
     should_refine_legal_action,
 )
 from autoharness.harness_as_policy.environments.base import EnvironmentAdapter
-from autoharness.harness_as_policy.executor import PolicyExecutor
+from autoharness.harness_as_policy.executor import PolicyExecutor, policy_randomness_metadata
 from autoharness.harness_as_policy.models import (
     Candidate,
     CandidateRankKey,
@@ -325,6 +325,7 @@ def synthesize(
             "environment_seed": environment_seed,
             "training_rollouts": training_rollouts,
             "training_episode_seeds": episode_seeds,
+            "policy_randomness": policy_randomness_metadata(),
         }
     )
 

@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import ast
+import hashlib
 import json
 import os
+import platform
 import select
 import signal
 import subprocess
@@ -74,6 +76,7 @@ DANGEROUS_BUILTINS: set[str] = {
     "vars",
     "globals",
     "locals",
+    "super",
 }
 
 DANGEROUS_ATTRIBUTES: set[str] = {
@@ -83,11 +86,54 @@ DANGEROUS_ATTRIBUTES: set[str] = {
     "__class__",
     "__dict__",
     "__builtins__",
+    "__getattribute__",
+    "__base__",
+    "__bases__",
+    "__mro__",
+    "__subclasses__",
+    "mro",
+    "SystemRandom",
 }
 
 MAX_OUTPUT_BYTES: int = 65536
 MAX_STDERR_BYTES: int = 65536
 RESULT_MARKER: str = "__AUTOHARNESS_RESULT__"
+
+POLICY_RANDOMNESS_SCHEMA_VERSION = 1
+POLICY_SEED_DERIVATION = "sha256-first-uint64-be-v1"
+POLICY_SEED_DOMAIN = b"autoharness-policy-seed-v1"
+POLICY_EXECUTOR_STATE_MODEL = "fresh-subprocess-per-action"
+POLICY_SESSION_STATE_MODEL = "persistent-subprocess-per-episode"
+MAX_POLICY_SEED = 2**64
+
+
+def derive_policy_seed(episode_seed: int, action_index: int) -> int:
+    """Derive a stable uint64 policy seed for one policy invocation."""
+    if not isinstance(episode_seed, int) or isinstance(episode_seed, bool):
+        raise TypeError("episode_seed must be an integer")
+    if not isinstance(action_index, int) or isinstance(action_index, bool):
+        raise TypeError("action_index must be an integer")
+    if action_index < 0:
+        raise ValueError("action_index must be non-negative")
+    payload = b"\0".join(
+        (POLICY_SEED_DOMAIN, str(episode_seed).encode("ascii"), str(action_index).encode("ascii"))
+    )
+    return int.from_bytes(hashlib.sha256(payload).digest()[:8], "big")
+
+
+def policy_randomness_metadata() -> dict[str, object]:
+    """Describe the generated-policy randomness and process-state contract."""
+    return {
+        "schema_version": POLICY_RANDOMNESS_SCHEMA_VERSION,
+        "seed_derivation": POLICY_SEED_DERIVATION,
+        "seed_inputs": ["episode_seed", "zero_based_policy_invocation_index"],
+        "state_model": POLICY_EXECUTOR_STATE_MODEL,
+        "supported_rng": "stdlib-random-public-api",
+        "none_seed_behavior": "assigned_policy_seed",
+        "system_random": "rejected",
+        "python_implementation": platform.python_implementation(),
+        "python_version": platform.python_version(),
+    }
 
 
 @dataclass
@@ -100,6 +146,196 @@ class ExecutionResult:
     is_legal_action: bool | None = None
     failure_type: str | None = None
     error_details: str | None = None
+    policy_seed: int | None = None
+
+
+class PolicyExecutorSession:
+    """Episode-scoped session that loads the policy module once in a persistent subprocess.
+
+    The subprocess keeps module-level state alive across calls.  Each call to
+    ``execute`` sends a JSON-line request (observation + policy_seed) over
+    stdin and reads back a JSON-line result from stdout.
+
+    Use as a context manager::
+
+        with executor.begin_session(source) as session:
+            result = session.execute(observation, policy_seed=seed)
+    """
+
+    def __init__(
+        self,
+        proc: subprocess.Popen[bytes],
+        tmpdir_cleanup: tempfile.TemporaryDirectory[str],
+        timeout: int,
+    ) -> None:
+        self._proc = proc
+        self._tmpdir_cleanup = tmpdir_cleanup
+        self._timeout = timeout
+        self._closed = False
+
+    # ------------------------------------------------------------------
+    # Context-manager support
+    # ------------------------------------------------------------------
+
+    def __enter__(self) -> PolicyExecutorSession:
+        return self
+
+    def __exit__(self, *_args: object) -> None:
+        self.close()
+
+    def close(self) -> None:
+        """Terminate the persistent subprocess and clean up the temp directory."""
+        if self._closed:
+            return
+        self._closed = True
+        try:
+            if self._proc.stdin and not self._proc.stdin.closed:
+                self._proc.stdin.close()
+        except OSError:
+            pass
+        try:
+            os.killpg(self._proc.pid, signal.SIGKILL)
+        except ProcessLookupError, PermissionError, OSError:
+            try:
+                self._proc.kill()
+            except OSError:
+                pass
+        self._proc.wait()
+        self._tmpdir_cleanup.cleanup()
+
+    # ------------------------------------------------------------------
+    # Per-observation execution
+    # ------------------------------------------------------------------
+
+    def execute(self, observation: str, *, policy_seed: int) -> ExecutionResult:
+        """Send one observation to the persistent subprocess and return the result."""
+        if self._closed:
+            raise RuntimeError("Session is closed")
+        start = time.monotonic()
+        request = json.dumps({"observation": observation, "policy_seed": policy_seed})
+        try:
+            assert self._proc.stdin is not None
+            self._proc.stdin.write((request + "\n").encode())
+            self._proc.stdin.flush()
+        except OSError as exc:
+            return ExecutionResult(
+                success=False,
+                output=None,
+                latency=time.monotonic() - start,
+                failure_type="execution_failure",
+                error_details=f"Failed to send request to subprocess: {exc}",
+                policy_seed=policy_seed,
+            )
+        # Read one response line from stdout.
+        deadline = time.monotonic() + self._timeout
+        stdout_buf = b""
+        assert self._proc.stdout is not None
+        stdout_fd = self._proc.stdout.fileno()
+        while b"\n" not in stdout_buf:
+            time_left = deadline - time.monotonic()
+            if time_left <= 0:
+                self.close()
+                return ExecutionResult(
+                    success=False,
+                    output=None,
+                    latency=time.monotonic() - start,
+                    failure_type="execution_failure",
+                    error_details="Subprocess timed out",
+                    policy_seed=policy_seed,
+                )
+            rlist, _, _ = select.select([self._proc.stdout], [], [], max(0.0, time_left))
+            if not rlist:
+                if self._proc.poll() is not None:
+                    break
+                continue
+            try:
+                chunk = os.read(stdout_fd, 4096)
+            except OSError:
+                chunk = b""
+            if not chunk:
+                break
+            stdout_buf += chunk
+        latency = time.monotonic() - start
+        # Check for subprocess crash.
+        if self._proc.poll() is not None and b"\n" not in stdout_buf:
+            stderr_text = ""
+            if self._proc.stderr:
+                try:
+                    err_bytes = self._proc.stderr.read()
+                    stderr_text = err_bytes.decode("utf-8", errors="replace").strip()
+                except OSError:
+                    pass
+            return ExecutionResult(
+                success=False,
+                output=None,
+                latency=latency,
+                failure_type="execution_failure",
+                error_details=f"Subprocess exited unexpectedly: {stderr_text}"
+                if stderr_text
+                else "Subprocess exited unexpectedly",
+                policy_seed=policy_seed,
+            )
+        line = stdout_buf.split(b"\n", 1)[0]
+        try:
+            payload: object = json.loads(line.decode("utf-8", errors="replace"))
+        except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+            return ExecutionResult(
+                success=False,
+                output=None,
+                latency=latency,
+                failure_type="execution_failure",
+                error_details=f"Malformed response from subprocess: {exc}",
+                policy_seed=policy_seed,
+            )
+        if not isinstance(payload, dict):
+            return ExecutionResult(
+                success=False,
+                output=None,
+                latency=latency,
+                failure_type="execution_failure",
+                error_details="Malformed response from subprocess",
+                policy_seed=policy_seed,
+            )
+        if "error" in payload:
+            _payload = cast("dict[str, object]", payload)
+            failure_type = _payload.get("failure_type", "execution_failure")
+            if not isinstance(failure_type, str):
+                failure_type = "execution_failure"
+            return ExecutionResult(
+                success=False,
+                output=None,
+                latency=latency,
+                failure_type=failure_type,
+                error_details=str(_payload["error"]),
+                policy_seed=policy_seed,
+            )
+        action = payload.get("action")
+        is_legal_action = payload.get("is_legal_action")
+        if not isinstance(action, str):
+            return ExecutionResult(
+                success=False,
+                output=None,
+                latency=latency,
+                failure_type="execution_failure",
+                error_details="propose_action did not return a string",
+                policy_seed=policy_seed,
+            )
+        if not isinstance(is_legal_action, bool):
+            return ExecutionResult(
+                success=False,
+                output=None,
+                latency=latency,
+                failure_type="execution_failure",
+                error_details="is_legal_action did not return a bool",
+                policy_seed=policy_seed,
+            )
+        return ExecutionResult(
+            success=True,
+            output=action,
+            latency=latency,
+            is_legal_action=is_legal_action,
+            policy_seed=policy_seed,
+        )
 
 
 class PolicyExecutor:
@@ -117,8 +353,14 @@ class PolicyExecutor:
         self._cpu_limit = cpu_limit
         self._memory_limit_bytes = memory_limit_mb * 1024 * 1024
 
-    def execute(self, source: str, observation: str) -> ExecutionResult:
+    def execute(self, source: str, observation: str, *, policy_seed: int) -> ExecutionResult:
         """Validate and execute propose_action with the given observation."""
+        if (
+            not isinstance(policy_seed, int)
+            or isinstance(policy_seed, bool)
+            or not 0 <= policy_seed < MAX_POLICY_SEED
+        ):
+            raise ValueError("policy_seed must be an integer in [0, 2**64)")
         start = time.monotonic()
         if len(source.encode("utf-8")) > self._max_source_size:
             return ExecutionResult(
@@ -127,6 +369,7 @@ class PolicyExecutor:
                 latency=time.monotonic() - start,
                 failure_type="contract_failure",
                 error_details=f"Source exceeds {self._max_source_size} bytes",
+                policy_seed=policy_seed,
             )
         parse_err = self._validate_ast(source)
         if parse_err:
@@ -136,9 +379,12 @@ class PolicyExecutor:
                 latency=time.monotonic() - start,
                 failure_type="contract_failure",
                 error_details=parse_err,
+                policy_seed=policy_seed,
             )
         try:
-            output, is_legal_action = self._run_subprocess(source, observation)
+            output, is_legal_action = self._run_subprocess(
+                source, observation, policy_seed=policy_seed
+            )
         except subprocess.TimeoutExpired:
             return ExecutionResult(
                 success=False,
@@ -146,6 +392,7 @@ class PolicyExecutor:
                 latency=time.monotonic() - start,
                 failure_type="execution_failure",
                 error_details="Subprocess timed out",
+                policy_seed=policy_seed,
             )
         except Exception as e:
             return ExecutionResult(
@@ -154,12 +401,14 @@ class PolicyExecutor:
                 latency=time.monotonic() - start,
                 failure_type="execution_failure",
                 error_details=str(e),
+                policy_seed=policy_seed,
             )
         return ExecutionResult(
             success=True,
             output=output,
             latency=time.monotonic() - start,
             is_legal_action=is_legal_action,
+            policy_seed=policy_seed,
         )
 
     def _validate_ast(self, source: str) -> str | None:
@@ -191,8 +440,8 @@ class PolicyExecutor:
         for node in ast.walk(tree):
             if isinstance(node, ast.Attribute) and node.attr in DANGEROUS_ATTRIBUTES:
                 return f"Disallowed attribute access: {node.attr}"
-            if isinstance(node, ast.Name) and node.id == "__import__":
-                return "Disallowed reference: __import__"
+            if isinstance(node, ast.Name) and node.id in {"__import__", "SystemRandom"}:
+                return f"Disallowed reference: {node.id}"
             if isinstance(node, ast.Import):
                 for alias in node.names:
                     top = alias.name.split(".")[0]
@@ -203,6 +452,9 @@ class PolicyExecutor:
                     top = node.module.split(".")[0]
                     if top not in SAFE_IMPORTS:
                         return f"Disallowed import: {node.module}"
+                for alias in node.names:
+                    if alias.name == "SystemRandom":
+                        return "Disallowed import: SystemRandom"
             elif isinstance(node, ast.Call):
                 func = node.func
                 if isinstance(func, ast.Name) and func.id in DANGEROUS_BUILTINS:
@@ -211,7 +463,7 @@ class PolicyExecutor:
                     return "Disallowed attribute access: __import__"
         return None
 
-    def _make_script(self, source: str, observation: str) -> str:
+    def _make_script(self, source: str, observation: str, *, policy_seed: int) -> str:
         """Build the subprocess script with resource limits and restricted builtins."""
         cpu = self._cpu_limit
         mem = self._memory_limit_bytes
@@ -228,7 +480,7 @@ class PolicyExecutor:
             "breakpoint", "input",
             "getattr", "setattr", "delattr",
             "vars", "globals", "locals",
-            "__import__",
+            "__import__", "super",
         }}
         _allowed_builtins = {{}}
         for _key, _val in vars(builtins).items():
@@ -250,6 +502,24 @@ class PolicyExecutor:
                 return getattr(object.__getattribute__(self, "_inner"), _n)
 
         _orig_import = builtins.__import__
+
+        _policy_seed = {policy_seed}
+        _policy_random = _orig_import("random")
+        _original_random_seed = _policy_random.Random.seed
+
+        def _seed_with_policy_default(_self, a=None, version=2):
+            _effective = _policy_seed if a is None else a
+            return _original_random_seed(_self, _effective, version=version)
+
+        _policy_random.Random.seed = _seed_with_policy_default
+        _policy_random.seed = _policy_random._inst.seed
+        _policy_random.seed(_policy_seed)
+
+        class _DisabledSystemRandom:
+            def __init__(self, *_args, **_kwargs):
+                raise RuntimeError("SystemRandom is not available to generated policies")
+
+        _policy_random.SystemRandom = _DisabledSystemRandom
 
         def _safe_import(_name, _g=None, _l=None, _fl=(), _lv=0):
             _top = _name.split(".")[0]
@@ -278,6 +548,203 @@ class PolicyExecutor:
         _payload = json.dumps({{"action": _action, "is_legal_action": _is_legal}})
         print({RESULT_MARKER!r} + _payload)
         """)
+
+    def _make_session_script(self, source: str) -> str:
+        """Build a persistent-session subprocess script.
+
+        The subprocess loads the policy module once, then enters a REPL loop that
+        reads JSON-line requests from stdin and writes JSON-line responses to stdout.
+        Each request contains ``{"observation": ..., "policy_seed": ...}``.
+        Each response is ``{"action": ..., "is_legal_action": ...}`` on success or
+        ``{"error": ..., "failure_type": ...}`` on failure.
+        Module-level state is preserved across iterations.
+        """
+        cpu = self._cpu_limit
+        mem = self._memory_limit_bytes
+        return textwrap.dedent(f"""\
+        import builtins, json, os, resource, sys
+
+        resource.setrlimit(resource.RLIMIT_CPU, ({cpu}, {cpu}))
+        resource.setrlimit(resource.RLIMIT_AS, ({mem}, {mem}))
+        resource.setrlimit(resource.RLIMIT_NPROC, (0, 0))
+        resource.setrlimit(resource.RLIMIT_FSIZE, (65536, 65536))
+
+        _disallowed = {{
+            "open", "eval", "exec", "compile",
+            "breakpoint", "input",
+            "getattr", "setattr", "delattr",
+            "vars", "globals", "locals",
+            "__import__", "super",
+        }}
+        _allowed_builtins = {{}}
+        for _key, _val in vars(builtins).items():
+            if _key in _disallowed:
+                continue
+            _allowed_builtins[_key] = _val
+
+        _safe_import_names = {{"math", "random", "re", "typing",
+            "itertools", "collections", "functools", "dataclasses",
+            "enum", "string"}}
+
+        class _ModuleProxy:
+            def __init__(self, _m):
+                object.__setattr__(self, "_inner", _m)
+            def __getattribute__(self, _n):
+                if _n.startswith("_"):
+                    msg = "Access to private attribute '{{}}' is not allowed".format(_n)
+                    raise AttributeError(msg)
+                return getattr(object.__getattribute__(self, "_inner"), _n)
+
+        _orig_import = builtins.__import__
+        _policy_random = _orig_import("random")
+        _original_random_seed = _policy_random.Random.seed
+
+        class _DisabledSystemRandom:
+            def __init__(self, *_args, **_kwargs):
+                raise RuntimeError("SystemRandom is not available to generated policies")
+
+        _policy_random.SystemRandom = _DisabledSystemRandom
+
+        def _safe_import(_name, _g=None, _l=None, _fl=(), _lv=0):
+            _top = _name.split(".")[0]
+            if _top not in _safe_import_names:
+                msg = "Disallowed import: {{}}".format(_name)
+                raise ImportError(msg)
+            _mod = _orig_import(_name, _g, _l, _fl, _lv)
+            _wrap = _ModuleProxy(_mod)
+            sys.modules[_top] = _wrap
+            return _wrap
+
+        _allowed_builtins["__import__"] = _safe_import
+
+        # Load the policy module once; module-level state persists across calls.
+        _globals = {{"__builtins__": _allowed_builtins, "__name__": "__policy__"}}
+        try:
+            exec(compile({source!r}, "<policy>", "exec"), _globals)
+        except Exception as _e:
+            _resp = json.dumps({{"error": str(_e), "failure_type": "contract_failure"}})
+            sys.stdout.write(_resp + "\\n")
+            sys.stdout.flush()
+            sys.exit(1)
+
+        sys.stdout.write("ready\\n")
+        sys.stdout.flush()
+
+        # Per-observation REPL loop.
+        for _raw_line in sys.stdin:
+            _raw_line = _raw_line.strip()
+            if not _raw_line:
+                continue
+            try:
+                _req = json.loads(_raw_line)
+                _policy_seed = int(_req["policy_seed"])
+                _observation = str(_req["observation"])
+            except Exception as _e:
+                _resp = json.dumps(
+                {{"error": "Bad request: " + str(_e), "failure_type": "execution_failure"}}
+                )
+                sys.stdout.write(_resp + "\\n")
+                sys.stdout.flush()
+                continue
+
+            # Re-seed the RNG for this invocation.
+            def _seed_with_policy_default(_self, a=None, version=2, *, _seed=_policy_seed):
+                _effective = _seed if a is None else a
+                return _original_random_seed(_self, _effective, version=version)
+
+            _policy_random.Random.seed = _seed_with_policy_default
+            _policy_random.seed = _policy_random._inst.seed
+            _policy_random.seed(_policy_seed)
+
+            try:
+                _action = _globals["propose_action"](_observation)
+                if not isinstance(_action, str):
+                    raise TypeError("propose_action did not return a string")
+                _is_legal = _globals["is_legal_action"](_observation, _action)
+                if not isinstance(_is_legal, bool):
+                    raise TypeError("is_legal_action did not return a bool")
+                _resp = json.dumps({{"action": _action, "is_legal_action": _is_legal}})
+            except Exception as _e:
+                _resp = json.dumps({{"error": str(_e), "failure_type": "execution_failure"}})
+            sys.stdout.write(_resp + "\\n")
+            sys.stdout.flush()
+        """)
+
+    def begin_session(self, source: str) -> PolicyExecutorSession:
+        """Start an episode-scoped session that loads the policy module once.
+
+        The caller is responsible for closing the session (use as a context manager).
+        AST validation is performed before the subprocess is launched; a
+        ``ValueError`` is raised if the source fails validation.
+        """
+        parse_err = self._validate_ast(source)
+        if parse_err:
+            raise ValueError(parse_err)
+        script = self._make_session_script(source)
+        tmpdir = tempfile.TemporaryDirectory()
+        try:
+            proc = subprocess.Popen(
+                [sys.executable, "-I", "-c", script],
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                cwd=tmpdir.name,
+                start_new_session=True,
+            )
+        except Exception:
+            tmpdir.cleanup()
+            raise
+        # Wait for the "ready" handshake (or an error JSON line).
+        deadline = time.monotonic() + self._timeout
+        init_buf = b""
+        assert proc.stdout is not None
+        stdout_fd = proc.stdout.fileno()
+        while b"\n" not in init_buf:
+            time_left = deadline - time.monotonic()
+            if time_left <= 0:
+                try:
+                    os.killpg(proc.pid, signal.SIGKILL)
+                except ProcessLookupError, PermissionError, OSError:
+                    try:
+                        proc.kill()
+                    except OSError:
+                        pass
+                proc.wait()
+                tmpdir.cleanup()
+                raise TimeoutError("Policy module did not initialize within timeout")
+            rlist, _, _ = select.select([proc.stdout], [], [], max(0.0, time_left))
+            if not rlist:
+                if proc.poll() is not None:
+                    break
+                continue
+            try:
+                chunk = os.read(stdout_fd, 4096)
+            except OSError:
+                chunk = b""
+            if not chunk:
+                break
+            init_buf += chunk
+        first_line = init_buf.split(b"\n", 1)[0].decode("utf-8", errors="replace").strip()
+        if first_line != "ready":
+            # The script wrote an error JSON before exiting.
+            try:
+                os.killpg(proc.pid, signal.SIGKILL)
+            except ProcessLookupError, PermissionError, OSError:
+                try:
+                    proc.kill()
+                except OSError:
+                    pass
+            proc.wait()
+            tmpdir.cleanup()
+            try:
+                err_payload: object = json.loads(first_line)
+                if isinstance(err_payload, dict) and "error" in err_payload:
+                    _err = cast("dict[str, object]", err_payload)
+                    raise ValueError(str(_err["error"]))
+            except json.JSONDecodeError, ValueError:
+                pass
+            raise ValueError(f"Policy module initialization failed: {first_line!r}")
+        return PolicyExecutorSession(proc, tmpdir, self._timeout)
 
     def _read_output(self, proc: subprocess.Popen[bytes]) -> str:
         """Read stdout/stderr incrementally with output cap. Raises on timeout or overflow."""
@@ -354,9 +821,11 @@ class PolicyExecutor:
 
         return stdout_str.strip()
 
-    def _run_subprocess(self, source: str, observation: str) -> tuple[str, bool]:
+    def _run_subprocess(
+        self, source: str, observation: str, *, policy_seed: int
+    ) -> tuple[str, bool]:
         """Run both policy functions and parse the final marked protocol result."""
-        script = self._make_script(source, observation)
+        script = self._make_script(source, observation, policy_seed=policy_seed)
         with tempfile.TemporaryDirectory() as tmpdir:
             proc = subprocess.Popen(
                 [sys.executable, "-I", "-c", script],

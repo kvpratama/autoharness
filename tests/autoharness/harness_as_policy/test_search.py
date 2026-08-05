@@ -9,7 +9,7 @@ from pathlib import Path
 
 import pytest
 
-from autoharness.harness_as_policy.executor import ExecutionResult
+from autoharness.harness_as_policy.executor import ExecutionResult, policy_randomness_metadata
 from autoharness.harness_as_policy.models import (
     Candidate,
     CandidateRankKey,
@@ -488,6 +488,9 @@ def test_synthesize_persists_order_matching_find_best_candidate() -> None:
     """Persisted ranking exactly matches final candidate selection."""
     failing_source = """def propose_action(observation: str) -> str:
     raise RuntimeError("failing policy")
+
+def is_legal_action(observation: str, action: str) -> bool:
+    return True
 """
     with tempfile.TemporaryDirectory() as tmpdir:
         result = synthesize(
@@ -969,6 +972,12 @@ def test_synthesize_reuses_shared_environment_seeds_for_every_candidate(tmp_path
     assert adapter.reset_seeds == [*seeds, *seeds, *seeds]
     assert config["environment_seed"] == 17
     assert config["training_rollouts"] == 3
+    assert config["policy_randomness"] == policy_randomness_metadata()
+    assert config["policy_randomness"]["state_model"] == "fresh-subprocess-per-action"
+    assert config["policy_randomness"]["seed_inputs"] == [
+        "episode_seed",
+        "zero_based_policy_invocation_index",
+    ]
 
 
 def test_synthesize_refines_only_action_after_checker_rejection() -> None:
@@ -1021,19 +1030,33 @@ def test_first_refinement_receives_every_seeded_board_without_executing_root(
 ) -> None:
     executed_sources: list[str] = []
 
-    class RecordingExecutor:
-        def __init__(self, timeout: int, max_source_size: int) -> None:
-            self.timeout = timeout
-            self.max_source_size = max_source_size
+    class _RecordingSession:
+        def __init__(self, source: str) -> None:
+            self._source = source
 
-        def execute(self, source: str, observation: str) -> ExecutionResult:
-            executed_sources.append(source)
+        def __enter__(self) -> _RecordingSession:
+            return self
+
+        def __exit__(self, *args: object) -> None:
+            pass
+
+        def execute(self, observation: str, *, policy_seed: int) -> ExecutionResult:
+            executed_sources.append(self._source)
             return ExecutionResult(
                 success=True,
                 output="[X Y]",
                 latency=0.0,
                 is_legal_action=True,
+                policy_seed=policy_seed,
             )
+
+    class RecordingExecutor:
+        def __init__(self, timeout: int, max_source_size: int) -> None:
+            self.timeout = timeout
+            self.max_source_size = max_source_size
+
+        def begin_session(self, source: str) -> _RecordingSession:
+            return _RecordingSession(source)
 
     monkeypatch.setattr(
         "autoharness.harness_as_policy.search.PolicyExecutor",

@@ -98,9 +98,9 @@ class ArtifactStore:
         tmp.rename(path)
 
     def write_assessment(self, candidate_id: str, assessment: CandidateAssessment) -> None:
-        """Persist a version-three aggregate assessment and all episode details."""
+        """Persist a version-four aggregate assessment and all episode details."""
         data = {
-            "schema_version": 3,
+            "schema_version": 4,
             "aggregate": {
                 "heuristic": assessment.heuristic,
                 "terminal_reward": assessment.terminal_reward,
@@ -156,6 +156,7 @@ class ArtifactStore:
                     "terminated": attempt.terminated,
                     "feedback": attempt.feedback,
                     "error_phase": attempt.error_phase.value if attempt.error_phase else None,
+                    "policy_seed": attempt.policy_seed,
                 }
                 for attempt in result.attempts
             ],

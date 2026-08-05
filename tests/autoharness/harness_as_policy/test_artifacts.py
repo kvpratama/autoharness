@@ -56,7 +56,7 @@ def test_write_candidate_source(store: ArtifactStore) -> None:
 
 
 def test_write_assessment_preserves_aggregate_and_episodes(store: ArtifactStore) -> None:
-    """write_assessment persists version-three aggregate and episode data."""
+    """write_assessment persists version-four aggregate and episode data."""
     result = RolloutResult(
         steps=[StepResult("obs", "[A C]", True, 0.0, False, "")],
         heuristic=0.5,
@@ -76,6 +76,7 @@ def test_write_assessment_preserves_aggregate_and_episodes(store: ArtifactStore)
                 terminated=False,
                 feedback="",
                 error_phase=None,
+                policy_seed=11891538334161795807,
             )
         ],
     )
@@ -104,7 +105,7 @@ def test_write_assessment_preserves_aggregate_and_episodes(store: ArtifactStore)
     path = store.root / store.run_id / "rollouts" / "005.json"
     assert path.exists()
     data = json.loads(path.read_text())
-    assert data["schema_version"] == 3
+    assert data["schema_version"] == 4
     assert data["aggregate"]["heuristic"] == 0.75
     assert data["aggregate"]["termination_reason"] == "step_limit"
     assert data["aggregate"]["failure_summary"] is None
@@ -123,6 +124,7 @@ def test_write_assessment_preserves_aggregate_and_episodes(store: ArtifactStore)
             "terminated": False,
             "feedback": "",
             "error_phase": None,
+            "policy_seed": 11891538334161795807,
         }
     ]
     assert "heuristic" not in data

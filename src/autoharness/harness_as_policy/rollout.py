@@ -6,7 +6,11 @@ from collections.abc import Callable
 from typing import Protocol
 
 from autoharness.harness_as_policy.environments.base import EnvironmentAdapter
-from autoharness.harness_as_policy.executor import ExecutionResult, PolicyExecutor
+from autoharness.harness_as_policy.executor import (
+    ExecutionResult,
+    PolicyExecutor,
+    derive_policy_seed,
+)
 from autoharness.harness_as_policy.models import (
     ActionAttempt,
     AttemptErrorPhase,
@@ -22,7 +26,7 @@ ActionProvider = Callable[[str], ExecutionResult]
 class ExecutorProtocol(Protocol):
     """Protocol for policy executors."""
 
-    def execute(self, source: str, observation: str) -> ExecutionResult: ...
+    def execute(self, source: str, observation: str, *, policy_seed: int) -> ExecutionResult: ...
 
 
 class RolloutEvaluator:
@@ -34,13 +38,17 @@ class RolloutEvaluator:
         self._adapter = adapter
         self._executor = executor or PolicyExecutor()
 
-    def evaluate(self, source: str, seed: int | None = None) -> RolloutResult:
-        """Run one generated-policy rollout and return the result."""
-        return self.evaluate_actions(
-            lambda observation: self._executor.execute(source, observation),
-            seed=seed,
-            checks_legality=True,
-        )
+    def evaluate(self, source: str, seed: int) -> RolloutResult:
+        """Run one seeded generated-policy rollout and return the result."""
+        action_index = 0
+
+        def execute_policy(observation: str) -> ExecutionResult:
+            nonlocal action_index
+            policy_seed = derive_policy_seed(seed, action_index)
+            action_index += 1
+            return self._executor.execute(source, observation, policy_seed=policy_seed)
+
+        return self.evaluate_actions(execute_policy, seed=seed, checks_legality=True)
 
     def initial_observation(self, seed: int) -> str:
         """Create and reset the environment for one seeded initial board."""
@@ -108,6 +116,7 @@ class RolloutEvaluator:
                     feedback=outcome.error_details or "",
                     error_phase=AttemptErrorPhase.POLICY_EXECUTION,
                     failure_summary=outcome.error_details,
+                    policy_seed=outcome.policy_seed,
                 )
             action = outcome.output
             attempts += 1
@@ -126,6 +135,7 @@ class RolloutEvaluator:
                     policy_legal=False,
                     feedback=failure,
                     error_phase=AttemptErrorPhase.POLICY_LEGALITY,
+                    policy_seed=outcome.policy_seed,
                 )
             try:
                 step = self._adapter.step(action)
@@ -141,6 +151,7 @@ class RolloutEvaluator:
                     policy_legal=outcome.is_legal_action if checks_legality else None,
                     feedback=failure,
                     error_phase=AttemptErrorPhase.ENVIRONMENT_STEP,
+                    policy_seed=outcome.policy_seed,
                 )
             steps.append(step)
             attempt_records.append(
@@ -154,6 +165,7 @@ class RolloutEvaluator:
                     terminated=step.terminated,
                     feedback=step.feedback,
                     error_phase=(None if step.is_legal else AttemptErrorPhase.ENVIRONMENT_STEP),
+                    policy_seed=outcome.policy_seed,
                 )
             )
             if not step.is_legal:
@@ -193,6 +205,7 @@ class RolloutEvaluator:
         feedback: str,
         error_phase: AttemptErrorPhase,
         failure_summary: str | None = None,
+        policy_seed: int | None = None,
     ) -> RolloutResult:
         attempt_records.append(
             ActionAttempt(
@@ -205,6 +218,7 @@ class RolloutEvaluator:
                 terminated=None,
                 feedback=feedback,
                 error_phase=error_phase,
+                policy_seed=policy_seed,
             )
         )
         return self._result(

@@ -20,7 +20,7 @@ from autoharness.harness_as_policy.models import (
 class SeededRolloutEvaluator(Protocol):
     """Rollout evaluator that accepts an optional environment seed."""
 
-    def evaluate(self, source: str, seed: int | None = None) -> RolloutResult: ...
+    def evaluate(self, source: str, seed: int) -> RolloutResult: ...
 
 
 _ACTIONABILITY = {

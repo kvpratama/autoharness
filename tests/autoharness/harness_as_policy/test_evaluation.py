@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from typing import cast
 
 import pytest
 
@@ -17,7 +18,11 @@ from autoharness.harness_as_policy.evaluation import (
     evaluate_policy_on_env,
     format_evaluation_summary,
 )
-from autoharness.harness_as_policy.executor import ExecutionResult
+from autoharness.harness_as_policy.executor import (
+    ExecutionResult,
+    derive_policy_seed,
+    policy_randomness_metadata,
+)
 from autoharness.harness_as_policy.models import StepResult, TerminationReason
 
 
@@ -41,9 +46,13 @@ class FakeAdapter:
         return self.step_result or StepResult("done", action, True, 1.0, True, "")
 
 
+@dataclass
 class FakeExecutor:
-    def execute(self, source: str, observation: str) -> ExecutionResult:
-        return ExecutionResult(True, "action", 0.0, is_legal_action=True)
+    policy_seeds: list[int] = field(default_factory=list)
+
+    def execute(self, source: str, observation: str, *, policy_seed: int) -> ExecutionResult:
+        self.policy_seeds.append(policy_seed)
+        return ExecutionResult(True, "action", 0.0, is_legal_action=True, policy_seed=policy_seed)
 
 
 def test_evaluation_protocol_prefix_preserves_order() -> None:
@@ -139,15 +148,24 @@ def test_evaluate_policy_uses_20_fresh_seeded_adapters() -> None:
         return adapter
 
     protocol = EvaluationProtocol.create("Exact-v0", 9, [1, 2])
+    executor = FakeExecutor()
     report = evaluate_policy(
         "source",
         EnvironmentSpec("Exact-v0", "fake", factory, 1, 1),
         protocol,
-        FakeExecutor(),
+        executor,
     )
     assert len(adapters) == 20
     assert [adapter.seed for adapter in adapters] == list(protocol.episode_seeds)
     assert report.aggregate.mean_reward == 1.0
+    assert report.policy_randomness == policy_randomness_metadata()
+    data = report.to_dict()
+    assert data["schema_version"] == 2
+    assert data["policy_randomness"] == policy_randomness_metadata()
+    assert cast(list[dict[str, object]], data["results"])[0]["policy_seeds"] == [
+        derive_policy_seed(report.results[0].seed, index)
+        for index in range(report.results[0].policy_invocation_count)
+    ]
 
 
 def test_evaluate_policy_records_factory_failure_and_continues() -> None:
@@ -180,7 +198,20 @@ def test_report_uses_action_weighted_legality_and_excludes_actionless_failures()
     protocol = EvaluationProtocol("Exact-v0", tuple(range(20)), ())
     results = [
         EvaluationResult(
-            seed, "Exact-v0", False, 0.0, 1, 2, 1, 1, TerminationReason.STEP_LIMIT, None, 0.1, False
+            seed,
+            "Exact-v0",
+            False,
+            0.0,
+            1,
+            2,
+            1,
+            1,
+            TerminationReason.STEP_LIMIT,
+            None,
+            0.1,
+            False,
+            policy_invocation_count=2,
+            policy_seeds=(derive_policy_seed(seed, 0), derive_policy_seed(seed, 1)),
         )
         for seed in range(19)
     ]
@@ -198,9 +229,11 @@ def test_report_uses_action_weighted_legality_and_excludes_actionless_failures()
             "failed",
             0.1,
             True,
+            policy_invocation_count=0,
+            policy_seeds=(),
         )
     )
-    report = EvaluationReport.create("test", protocol, results)
+    report = EvaluationReport.create("generated-policy", protocol, results)
     assert report.aggregate.legal_action_rate == 0.5
     assert report.aggregate.action_attempt_count == 38
     assert report.aggregate.execution_failure_count == 1
@@ -215,6 +248,8 @@ def _result(
     attempts: int = 0,
     reason: TerminationReason = TerminationReason.STEP_LIMIT,
     execution_failure: bool = False,
+    policy_invocation_count: int = 0,
+    policy_seeds: tuple[int, ...] = (),
 ) -> EvaluationResult:
     return EvaluationResult(
         seed=seed,
@@ -229,14 +264,35 @@ def _result(
         failure_summary="failed" if execution_failure else None,
         latency=0.1,
         execution_failure=execution_failure,
+        policy_invocation_count=policy_invocation_count,
+        policy_seeds=policy_seeds,
     )
 
 
 def test_report_aggregates_mean_reward_and_action_weighted_legality() -> None:
     protocol = EvaluationProtocol("Exact-v0", tuple(range(20)), ())
     results = [
-        *[_result(seed, reward=1.0, legal=3, attempts=4) for seed in range(10)],
-        *[_result(seed, legal=1, attempts=2) for seed in range(10, 20)],
+        *[
+            _result(
+                seed,
+                reward=1.0,
+                legal=3,
+                attempts=4,
+                policy_invocation_count=4,
+                policy_seeds=tuple(derive_policy_seed(seed, idx) for idx in range(4)),
+            )
+            for seed in range(10)
+        ],
+        *[
+            _result(
+                seed,
+                legal=1,
+                attempts=2,
+                policy_invocation_count=2,
+                policy_seeds=tuple(derive_policy_seed(seed, idx) for idx in range(2)),
+            )
+            for seed in range(10, 20)
+        ],
     ]
 
     report = EvaluationReport.create("generated-policy", protocol, results)
@@ -252,13 +308,25 @@ def test_baseline_report_serializes_model_and_selected_protocol() -> None:
     report = EvaluationReport.create(
         "llm-baseline",
         protocol,
-        [_result(seed, legal=1, attempts=1) for seed in range(5)],
+        [
+            _result(
+                seed,
+                legal=1,
+                attempts=1,
+                policy_invocation_count=0,
+                policy_seeds=(),
+            )
+            for seed in range(5)
+        ],
         model_id="openai:gpt-5.2-high",
     )
 
     data = report.to_dict()
 
+    assert data["schema_version"] == 2
+    assert data["policy_randomness"] is None
     assert data["model_id"] == "openai:gpt-5.2-high"
+    assert cast(list[dict[str, object]], data["results"])[0]["policy_seeds"] == []
     assert data["protocol"] == {
         "schema_version": 1,
         "name": "paper-1p",
@@ -280,6 +348,8 @@ def test_report_uses_no_legality_denominator_for_actionless_failures() -> None:
             seed,
             reason=TerminationReason.EXECUTION_FAILURE,
             execution_failure=True,
+            policy_invocation_count=0,
+            policy_seeds=(),
         )
         for seed in range(20)
     ]
@@ -318,6 +388,8 @@ def test_evaluate_policy_on_env_ignores_nonterminal_step_limit_reward() -> None:
     assert result.reward == 0.0
     assert result.termination_reason == TerminationReason.STEP_LIMIT
     assert result.action_attempt_count == 1
+    assert result.policy_invocation_count == 1
+    assert result.policy_seeds == (derive_policy_seed(123, 0),)
 
 
 def test_evaluation_summary_reports_canonical_aggregates() -> None:
@@ -325,7 +397,16 @@ def test_evaluation_summary_reports_canonical_aggregates() -> None:
     report = EvaluationReport.create(
         "generated-policy",
         protocol,
-        [_result(seed, legal=1, attempts=1) for seed in range(20)],
+        [
+            _result(
+                seed,
+                legal=1,
+                attempts=1,
+                policy_invocation_count=1,
+                policy_seeds=(derive_policy_seed(seed, 0),),
+            )
+            for seed in range(20)
+        ],
     )
 
     summary = format_evaluation_summary(report)

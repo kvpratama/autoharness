@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import ast
+import hashlib
 import json
 import os
+import platform
 import select
 import signal
 import subprocess
@@ -74,6 +76,7 @@ DANGEROUS_BUILTINS: set[str] = {
     "vars",
     "globals",
     "locals",
+    "super",
 }
 
 DANGEROUS_ATTRIBUTES: set[str] = {
@@ -83,11 +86,53 @@ DANGEROUS_ATTRIBUTES: set[str] = {
     "__class__",
     "__dict__",
     "__builtins__",
+    "__getattribute__",
+    "__base__",
+    "__bases__",
+    "__mro__",
+    "__subclasses__",
+    "mro",
+    "SystemRandom",
 }
 
 MAX_OUTPUT_BYTES: int = 65536
 MAX_STDERR_BYTES: int = 65536
 RESULT_MARKER: str = "__AUTOHARNESS_RESULT__"
+
+POLICY_RANDOMNESS_SCHEMA_VERSION = 1
+POLICY_SEED_DERIVATION = "sha256-first-uint64-be-v1"
+POLICY_SEED_DOMAIN = b"autoharness-policy-seed-v1"
+POLICY_EXECUTOR_STATE_MODEL = "fresh-subprocess-per-action"
+MAX_POLICY_SEED = 2**64
+
+
+def derive_policy_seed(episode_seed: int, action_index: int) -> int:
+    """Derive a stable uint64 policy seed for one policy invocation."""
+    if not isinstance(episode_seed, int) or isinstance(episode_seed, bool):
+        raise TypeError("episode_seed must be an integer")
+    if not isinstance(action_index, int) or isinstance(action_index, bool):
+        raise TypeError("action_index must be an integer")
+    if action_index < 0:
+        raise ValueError("action_index must be non-negative")
+    payload = b"\0".join(
+        (POLICY_SEED_DOMAIN, str(episode_seed).encode("ascii"), str(action_index).encode("ascii"))
+    )
+    return int.from_bytes(hashlib.sha256(payload).digest()[:8], "big")
+
+
+def policy_randomness_metadata() -> dict[str, object]:
+    """Describe the generated-policy randomness and process-state contract."""
+    return {
+        "schema_version": POLICY_RANDOMNESS_SCHEMA_VERSION,
+        "seed_derivation": POLICY_SEED_DERIVATION,
+        "seed_inputs": ["episode_seed", "zero_based_policy_invocation_index"],
+        "state_model": POLICY_EXECUTOR_STATE_MODEL,
+        "supported_rng": "stdlib-random-public-api",
+        "none_seed_behavior": "assigned_policy_seed",
+        "system_random": "rejected",
+        "python_implementation": platform.python_implementation(),
+        "python_version": platform.python_version(),
+    }
 
 
 @dataclass
@@ -100,6 +145,7 @@ class ExecutionResult:
     is_legal_action: bool | None = None
     failure_type: str | None = None
     error_details: str | None = None
+    policy_seed: int | None = None
 
 
 class PolicyExecutor:
@@ -117,8 +163,14 @@ class PolicyExecutor:
         self._cpu_limit = cpu_limit
         self._memory_limit_bytes = memory_limit_mb * 1024 * 1024
 
-    def execute(self, source: str, observation: str) -> ExecutionResult:
+    def execute(self, source: str, observation: str, *, policy_seed: int) -> ExecutionResult:
         """Validate and execute propose_action with the given observation."""
+        if (
+            not isinstance(policy_seed, int)
+            or isinstance(policy_seed, bool)
+            or not 0 <= policy_seed < MAX_POLICY_SEED
+        ):
+            raise ValueError("policy_seed must be an integer in [0, 2**64)")
         start = time.monotonic()
         if len(source.encode("utf-8")) > self._max_source_size:
             return ExecutionResult(
@@ -127,6 +179,7 @@ class PolicyExecutor:
                 latency=time.monotonic() - start,
                 failure_type="contract_failure",
                 error_details=f"Source exceeds {self._max_source_size} bytes",
+                policy_seed=policy_seed,
             )
         parse_err = self._validate_ast(source)
         if parse_err:
@@ -136,9 +189,12 @@ class PolicyExecutor:
                 latency=time.monotonic() - start,
                 failure_type="contract_failure",
                 error_details=parse_err,
+                policy_seed=policy_seed,
             )
         try:
-            output, is_legal_action = self._run_subprocess(source, observation)
+            output, is_legal_action = self._run_subprocess(
+                source, observation, policy_seed=policy_seed
+            )
         except subprocess.TimeoutExpired:
             return ExecutionResult(
                 success=False,
@@ -146,6 +202,7 @@ class PolicyExecutor:
                 latency=time.monotonic() - start,
                 failure_type="execution_failure",
                 error_details="Subprocess timed out",
+                policy_seed=policy_seed,
             )
         except Exception as e:
             return ExecutionResult(
@@ -154,12 +211,14 @@ class PolicyExecutor:
                 latency=time.monotonic() - start,
                 failure_type="execution_failure",
                 error_details=str(e),
+                policy_seed=policy_seed,
             )
         return ExecutionResult(
             success=True,
             output=output,
             latency=time.monotonic() - start,
             is_legal_action=is_legal_action,
+            policy_seed=policy_seed,
         )
 
     def _validate_ast(self, source: str) -> str | None:
@@ -191,8 +250,8 @@ class PolicyExecutor:
         for node in ast.walk(tree):
             if isinstance(node, ast.Attribute) and node.attr in DANGEROUS_ATTRIBUTES:
                 return f"Disallowed attribute access: {node.attr}"
-            if isinstance(node, ast.Name) and node.id == "__import__":
-                return "Disallowed reference: __import__"
+            if isinstance(node, ast.Name) and node.id in {"__import__", "SystemRandom"}:
+                return f"Disallowed reference: {node.id}"
             if isinstance(node, ast.Import):
                 for alias in node.names:
                     top = alias.name.split(".")[0]
@@ -203,6 +262,9 @@ class PolicyExecutor:
                     top = node.module.split(".")[0]
                     if top not in SAFE_IMPORTS:
                         return f"Disallowed import: {node.module}"
+                for alias in node.names:
+                    if alias.name == "SystemRandom":
+                        return "Disallowed import: SystemRandom"
             elif isinstance(node, ast.Call):
                 func = node.func
                 if isinstance(func, ast.Name) and func.id in DANGEROUS_BUILTINS:
@@ -211,7 +273,7 @@ class PolicyExecutor:
                     return "Disallowed attribute access: __import__"
         return None
 
-    def _make_script(self, source: str, observation: str) -> str:
+    def _make_script(self, source: str, observation: str, *, policy_seed: int) -> str:
         """Build the subprocess script with resource limits and restricted builtins."""
         cpu = self._cpu_limit
         mem = self._memory_limit_bytes
@@ -228,7 +290,7 @@ class PolicyExecutor:
             "breakpoint", "input",
             "getattr", "setattr", "delattr",
             "vars", "globals", "locals",
-            "__import__",
+            "__import__", "super",
         }}
         _allowed_builtins = {{}}
         for _key, _val in vars(builtins).items():
@@ -250,6 +312,24 @@ class PolicyExecutor:
                 return getattr(object.__getattribute__(self, "_inner"), _n)
 
         _orig_import = builtins.__import__
+
+        _policy_seed = {policy_seed}
+        _policy_random = _orig_import("random")
+        _original_random_seed = _policy_random.Random.seed
+
+        def _seed_with_policy_default(_self, _value=None, version=2):
+            _effective = _policy_seed if _value is None else _value
+            return _original_random_seed(_self, _effective, version=version)
+
+        _policy_random.Random.seed = _seed_with_policy_default
+        _policy_random.seed = _policy_random._inst.seed
+        _policy_random.seed(_policy_seed)
+
+        class _DisabledSystemRandom:
+            def __init__(self, *_args, **_kwargs):
+                raise RuntimeError("SystemRandom is not available to generated policies")
+
+        _policy_random.SystemRandom = _DisabledSystemRandom
 
         def _safe_import(_name, _g=None, _l=None, _fl=(), _lv=0):
             _top = _name.split(".")[0]
@@ -354,9 +434,11 @@ class PolicyExecutor:
 
         return stdout_str.strip()
 
-    def _run_subprocess(self, source: str, observation: str) -> tuple[str, bool]:
+    def _run_subprocess(
+        self, source: str, observation: str, *, policy_seed: int
+    ) -> tuple[str, bool]:
         """Run both policy functions and parse the final marked protocol result."""
-        script = self._make_script(source, observation)
+        script = self._make_script(source, observation, policy_seed=policy_seed)
         with tempfile.TemporaryDirectory() as tmpdir:
             proc = subprocess.Popen(
                 [sys.executable, "-I", "-c", script],

@@ -97,6 +97,7 @@ class ActionAttempt:
     terminated: bool | None
     feedback: str
     error_phase: AttemptErrorPhase | None
+    policy_seed: int | None = None
 
 
 @dataclass

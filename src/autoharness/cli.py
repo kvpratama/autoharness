@@ -8,6 +8,7 @@ import logging
 import re
 import sys
 import time
+from collections.abc import Mapping
 from pathlib import Path
 from typing import TypedDict, cast
 
@@ -30,7 +31,7 @@ from autoharness.harness_as_policy.evaluation import (
     evaluate_policy,
     format_evaluation_summary,
 )
-from autoharness.harness_as_policy.executor import ExecutionResult
+from autoharness.harness_as_policy.executor import ExecutionResult, policy_randomness_metadata
 from autoharness.harness_as_policy.live_policy import LivePolicy
 from autoharness.harness_as_policy.models import Profile
 from autoharness.harness_as_policy.refiner import Refiner
@@ -294,6 +295,16 @@ def _load_or_create_evaluation_protocol(
     return protocol
 
 
+def _validate_policy_randomness(config: Mapping[str, object]) -> None:
+    """Require the current generated-policy randomness protocol and runtime."""
+    actual = config.get("policy_randomness")
+    expected = policy_randomness_metadata()
+    if actual != expected:
+        raise ValueError(
+            "run policy_randomness metadata is missing or incompatible with this runtime"
+        )
+
+
 def evaluate_cmd(run_dir: Path) -> EvaluationReport | None:
     """Run the evaluate command."""
     best_policy_path = run_dir / "best.py"
@@ -305,6 +316,7 @@ def evaluate_cmd(run_dir: Path) -> EvaluationReport | None:
         config = store.load_config()
         if config is None:
             raise ValueError(f"no config.json found in {run_dir}")
+        _validate_policy_randomness(config)
         spec = get_environment_spec(config["env_id"])
         protocol = _load_or_create_evaluation_protocol(store, config, spec)
         report = evaluate_policy(best_policy_path.read_text(), spec, protocol)

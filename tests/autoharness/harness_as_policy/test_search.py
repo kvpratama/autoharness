@@ -9,7 +9,7 @@ from pathlib import Path
 
 import pytest
 
-from autoharness.harness_as_policy.executor import ExecutionResult
+from autoharness.harness_as_policy.executor import ExecutionResult, policy_randomness_metadata
 from autoharness.harness_as_policy.models import (
     Candidate,
     CandidateRankKey,
@@ -969,6 +969,12 @@ def test_synthesize_reuses_shared_environment_seeds_for_every_candidate(tmp_path
     assert adapter.reset_seeds == [*seeds, *seeds, *seeds]
     assert config["environment_seed"] == 17
     assert config["training_rollouts"] == 3
+    assert config["policy_randomness"] == policy_randomness_metadata()
+    assert config["policy_randomness"]["state_model"] == "fresh-subprocess-per-action"
+    assert config["policy_randomness"]["seed_inputs"] == [
+        "episode_seed",
+        "zero_based_policy_invocation_index",
+    ]
 
 
 def test_synthesize_refines_only_action_after_checker_rejection() -> None:
@@ -1026,13 +1032,14 @@ def test_first_refinement_receives_every_seeded_board_without_executing_root(
             self.timeout = timeout
             self.max_source_size = max_source_size
 
-        def execute(self, source: str, observation: str) -> ExecutionResult:
+        def execute(self, source: str, observation: str, *, policy_seed: int) -> ExecutionResult:
             executed_sources.append(source)
             return ExecutionResult(
                 success=True,
                 output="[X Y]",
                 latency=0.0,
                 is_legal_action=True,
+                policy_seed=policy_seed,
             )
 
     monkeypatch.setattr(

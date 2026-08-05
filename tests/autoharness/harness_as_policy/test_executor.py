@@ -568,3 +568,87 @@ def test_legality_entry_point_must_return_bool() -> None:
     assert result.failure_type == "execution_failure"
     assert "is_legal_action did not return a bool" in (result.error_details or "")
     assert result.policy_seed == 0
+
+
+def test_seed_keyword_a_explicit_value_module_level() -> None:
+    """random.seed(a=123) must not raise TypeError and must produce deterministic output."""
+    source = textwrap.dedent("""\
+        import random
+
+        def propose_action(board: str) -> str:
+            random.seed(a=123)
+            return str(random.getrandbits(32))
+
+        def is_legal_action(board: str, action: str) -> bool:
+            return True
+    """)
+    expected = str(random.Random(123).getrandbits(32))
+    result = PolicyExecutor(timeout=5, max_source_size=65536).execute(
+        source, "board", policy_seed=9999
+    )
+    assert result.success, result.error_details
+    assert result.output == expected
+
+
+def test_seed_keyword_a_none_module_level() -> None:
+    """random.seed(a=None) must re-seed with the policy seed, not raise TypeError."""
+    source = textwrap.dedent("""\
+        import random
+
+        def propose_action(board: str) -> str:
+            random.seed(a=None)
+            return str(random.getrandbits(32))
+
+        def is_legal_action(board: str, action: str) -> bool:
+            return True
+    """)
+    p_seed = derive_policy_seed(7, 0)
+    expected = str(random.Random(p_seed).getrandbits(32))
+    result = PolicyExecutor(timeout=5, max_source_size=65536).execute(
+        source, "board", policy_seed=p_seed
+    )
+    assert result.success, result.error_details
+    assert result.output == expected
+
+
+def test_seed_keyword_a_explicit_value_random_instance() -> None:
+    """rng.seed(a=123) on a Random instance must not raise TypeError."""
+    source = textwrap.dedent("""\
+        import random
+
+        def propose_action(board: str) -> str:
+            rng = random.Random()
+            rng.seed(a=123)
+            return str(rng.getrandbits(32))
+
+        def is_legal_action(board: str, action: str) -> bool:
+            return True
+    """)
+    expected = str(random.Random(123).getrandbits(32))
+    result = PolicyExecutor(timeout=5, max_source_size=65536).execute(
+        source, "board", policy_seed=1
+    )
+    assert result.success, result.error_details
+    assert result.output == expected
+
+
+def test_seed_keyword_a_none_random_instance() -> None:
+    """rng.seed(a=None, version=2) on a Random instance must use the policy seed."""
+    source = textwrap.dedent("""\
+        import random
+
+        def propose_action(board: str) -> str:
+            rng = random.Random()
+            rng.seed(a=None, version=2)
+            return str(rng.getrandbits(32))
+
+        def is_legal_action(board: str, action: str) -> bool:
+            return True
+    """)
+    p_seed = derive_policy_seed(3, 5)
+    expected = str(random.Random(p_seed).getrandbits(32))
+    result = PolicyExecutor(timeout=5, max_source_size=65536).execute(
+        source, "board", policy_seed=p_seed
+    )
+    assert result.success, result.error_details
+    assert result.output == expected

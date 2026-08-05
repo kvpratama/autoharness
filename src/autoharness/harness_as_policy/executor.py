@@ -317,8 +317,8 @@ class PolicyExecutor:
         _policy_random = _orig_import("random")
         _original_random_seed = _policy_random.Random.seed
 
-        def _seed_with_policy_default(_self, _value=None, version=2):
-            _effective = _policy_seed if _value is None else _value
+        def _seed_with_policy_default(_self, a=None, version=2):
+            _effective = _policy_seed if a is None else a
             return _original_random_seed(_self, _effective, version=version)
 
         _policy_random.Random.seed = _seed_with_policy_default

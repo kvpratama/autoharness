@@ -18,9 +18,20 @@ from autoharness.harness_as_policy.models import (
 
 
 class SeededRolloutEvaluator(Protocol):
-    """Rollout evaluator that accepts an optional environment seed."""
+    """Rollout evaluator that requires a deterministic environment seed."""
 
-    def evaluate(self, source: str, seed: int) -> RolloutResult: ...
+    def evaluate(self, source: str, seed: int) -> RolloutResult:
+        """Evaluate a policy source against the environment using a fixed seed.
+
+        Args:
+            source: Python source code of the candidate policy module.
+            seed: Required integer seed used to initialise the environment RNG
+                for a deterministic, reproducible rollout.
+
+        Returns:
+            A RolloutResult summarising the episode outcome.
+        """
+        ...
 
 
 _ACTIONABILITY = {

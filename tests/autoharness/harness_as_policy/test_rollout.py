@@ -23,7 +23,16 @@ class FakeExecutor:
     step_results: list[tuple[str, bool] | ExecutionResult | None] | None = None
     policy_seeds: list[int] = field(default_factory=list)
 
-    def execute(self, source: str, observation: str, *, policy_seed: int) -> ExecutionResult:
+    def begin_session(self, source: str) -> FakeExecutor:
+        return self
+
+    def __enter__(self) -> FakeExecutor:
+        return self
+
+    def __exit__(self, *args: object) -> None:
+        pass
+
+    def execute(self, observation: str, *, policy_seed: int) -> ExecutionResult:
         self.policy_seeds.append(policy_seed)
         if not self.step_results:
             return ExecutionResult(
@@ -155,7 +164,7 @@ def test_repeatable_complete_trajectory_with_real_executor() -> None:
     source = textwrap.dedent("""\
         import random
 
-        def propose_action(board: str) -> str:
+        def propose_action(observation: str) -> str:
             return str(random.getrandbits(64))
 
         def is_legal_action(board: str, action: str) -> bool:
@@ -184,6 +193,29 @@ def test_repeatable_complete_trajectory_with_real_executor() -> None:
     assert [attempt.action for attempt in first.attempts] != [
         attempt.action for attempt in third.attempts
     ]
+
+
+def test_generated_policy_module_state_persists_across_actions() -> None:
+    class ThreeStepAdapter(FakeAdapter):
+        def __init__(self) -> None:
+            super().__init__()
+            self.max_steps = 3
+
+    source = textwrap.dedent("""\
+        counter = 0
+
+        def propose_action(board: str) -> str:
+            global counter
+            counter += 1
+            return str(counter)
+
+        def is_legal_action(board: str, action: str) -> bool:
+            return True
+    """)
+
+    result = RolloutEvaluator(ThreeStepAdapter()).evaluate(source, seed=17)
+
+    assert [attempt.action for attempt in result.attempts] == ["1", "2", "3"]
 
 
 def test_initial_observation_uses_requested_seed_without_policy_execution() -> None:

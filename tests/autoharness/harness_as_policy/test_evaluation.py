@@ -47,12 +47,28 @@ class FakeAdapter:
 
 
 @dataclass
+class _FakeSession:
+    """Context-manager session returned by FakeExecutor.begin_session."""
+
+    _executor: FakeExecutor
+
+    def __enter__(self) -> _FakeSession:
+        return self
+
+    def __exit__(self, *args: object) -> None:
+        pass
+
+    def execute(self, observation: str, *, policy_seed: int) -> ExecutionResult:
+        self._executor.policy_seeds.append(policy_seed)
+        return ExecutionResult(True, "action", 0.0, is_legal_action=True, policy_seed=policy_seed)
+
+
+@dataclass
 class FakeExecutor:
     policy_seeds: list[int] = field(default_factory=list)
 
-    def execute(self, source: str, observation: str, *, policy_seed: int) -> ExecutionResult:
-        self.policy_seeds.append(policy_seed)
-        return ExecutionResult(True, "action", 0.0, is_legal_action=True, policy_seed=policy_seed)
+    def begin_session(self, source: str) -> _FakeSession:  # noqa: ARG002
+        return _FakeSession(self)
 
 
 def test_evaluation_protocol_prefix_preserves_order() -> None:

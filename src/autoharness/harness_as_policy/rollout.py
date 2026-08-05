@@ -23,10 +23,20 @@ from autoharness.harness_as_policy.models import (
 ActionProvider = Callable[[str], ExecutionResult]
 
 
-class ExecutorProtocol(Protocol):
-    """Protocol for policy executors."""
+class ExecutorSessionProtocol(Protocol):
+    """Protocol for an episode-scoped policy executor session."""
 
-    def execute(self, source: str, observation: str, *, policy_seed: int) -> ExecutionResult: ...
+    def __enter__(self) -> ExecutorSessionProtocol: ...
+
+    def __exit__(self, *args: object) -> None: ...
+
+    def execute(self, observation: str, *, policy_seed: int) -> ExecutionResult: ...
+
+
+class ExecutorProtocol(Protocol):
+    """Protocol for policy executors that create episode-scoped sessions."""
+
+    def begin_session(self, source: str) -> ExecutorSessionProtocol: ...
 
 
 class RolloutEvaluator:
@@ -42,13 +52,15 @@ class RolloutEvaluator:
         """Run one seeded generated-policy rollout and return the result."""
         action_index = 0
 
-        def execute_policy(observation: str) -> ExecutionResult:
-            nonlocal action_index
-            policy_seed = derive_policy_seed(seed, action_index)
-            action_index += 1
-            return self._executor.execute(source, observation, policy_seed=policy_seed)
+        with self._executor.begin_session(source) as session:
 
-        return self.evaluate_actions(execute_policy, seed=seed, checks_legality=True)
+            def execute_policy(observation: str) -> ExecutionResult:
+                nonlocal action_index
+                policy_seed = derive_policy_seed(seed, action_index)
+                action_index += 1
+                return session.execute(observation, policy_seed=policy_seed)
+
+            return self.evaluate_actions(execute_policy, seed=seed, checks_legality=True)
 
     def initial_observation(self, seed: int) -> str:
         """Create and reset the environment for one seeded initial board."""

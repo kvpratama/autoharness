@@ -488,6 +488,9 @@ def test_synthesize_persists_order_matching_find_best_candidate() -> None:
     """Persisted ranking exactly matches final candidate selection."""
     failing_source = """def propose_action(observation: str) -> str:
     raise RuntimeError("failing policy")
+
+def is_legal_action(observation: str, action: str) -> bool:
+    return True
 """
     with tempfile.TemporaryDirectory() as tmpdir:
         result = synthesize(
@@ -1027,13 +1030,18 @@ def test_first_refinement_receives_every_seeded_board_without_executing_root(
 ) -> None:
     executed_sources: list[str] = []
 
-    class RecordingExecutor:
-        def __init__(self, timeout: int, max_source_size: int) -> None:
-            self.timeout = timeout
-            self.max_source_size = max_source_size
+    class _RecordingSession:
+        def __init__(self, source: str) -> None:
+            self._source = source
 
-        def execute(self, source: str, observation: str, *, policy_seed: int) -> ExecutionResult:
-            executed_sources.append(source)
+        def __enter__(self) -> _RecordingSession:
+            return self
+
+        def __exit__(self, *args: object) -> None:
+            pass
+
+        def execute(self, observation: str, *, policy_seed: int) -> ExecutionResult:
+            executed_sources.append(self._source)
             return ExecutionResult(
                 success=True,
                 output="[X Y]",
@@ -1041,6 +1049,14 @@ def test_first_refinement_receives_every_seeded_board_without_executing_root(
                 is_legal_action=True,
                 policy_seed=policy_seed,
             )
+
+    class RecordingExecutor:
+        def __init__(self, timeout: int, max_source_size: int) -> None:
+            self.timeout = timeout
+            self.max_source_size = max_source_size
+
+        def begin_session(self, source: str) -> _RecordingSession:
+            return _RecordingSession(source)
 
     monkeypatch.setattr(
         "autoharness.harness_as_policy.search.PolicyExecutor",

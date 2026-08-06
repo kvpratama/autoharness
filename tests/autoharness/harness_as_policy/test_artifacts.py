@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from autoharness.harness_as_policy.artifacts import ArtifactStore
+from autoharness.harness_as_policy.artifacts import ArtifactStore, SynthesisTree, render_tree_text
 from autoharness.harness_as_policy.models import (
     ActionAttempt,
     CandidateAssessment,
@@ -267,14 +267,296 @@ def test_load_events_propagates_file_read_errors(
         store.load_events()
 
 
-def test_write_tree(store: ArtifactStore) -> None:
-    """write_tree persists tree data as JSON."""
-    tree = {"candidates": {"000": {"heuristic": 0.0}}, "best": "001"}
+def test_render_tree_text_shows_hierarchy_statuses_and_iteration_order() -> None:
+    tree: SynthesisTree = {
+        "candidates": {
+            "003": {
+                "id": "003",
+                "parent_id": "001",
+                "heuristic": 0.5,
+                "terminal_reward": 0.25,
+                "iteration": 3,
+                "rollout_eligible": True,
+                "failure_count": 0,
+                "failure_summary": None,
+                "termination_reason": "step_limit",
+            },
+            "002": {
+                "id": "002",
+                "parent_id": "000",
+                "heuristic": 1.0,
+                "terminal_reward": 1.0,
+                "iteration": 2,
+                "rollout_eligible": True,
+                "failure_count": 0,
+                "failure_summary": None,
+                "termination_reason": "environment_termination",
+            },
+            "000": {
+                "id": "000",
+                "parent_id": None,
+                "heuristic": 0.0,
+                "terminal_reward": 0.0,
+                "iteration": 0,
+                "rollout_eligible": False,
+                "failure_count": 0,
+                "failure_summary": None,
+                "termination_reason": None,
+            },
+            "001": {
+                "id": "001",
+                "parent_id": "000",
+                "heuristic": 0.0,
+                "terminal_reward": 0.0,
+                "iteration": 1,
+                "rollout_eligible": False,
+                "failure_count": 1,
+                "failure_summary": "pop from empty list",
+                "termination_reason": "execution_failure",
+            },
+        },
+        "best_candidate_id": "002",
+    }
+
+    assert render_tree_text(tree) == (
+        "Synthesis tree\n"
+        "\n"
+        "[000 H=0.00 R=0.00 ROOT]\n"
+        "|-- [001 H=0.00 R=0.00 FAIL: pop from empty list]\n"
+        "|   `-- [003 H=0.50 R=0.25 OK]\n"
+        "`-- [002 H=1.00 R=1.00 BEST]\n"
+    )
+
+
+def test_render_tree_text_prioritizes_best_over_root_for_selected_root_candidate() -> None:
+    tree: SynthesisTree = {
+        "candidates": {
+            "000": {
+                "id": "000",
+                "parent_id": None,
+                "heuristic": 1.0,
+                "terminal_reward": 1.0,
+                "iteration": 0,
+                "rollout_eligible": True,
+                "failure_count": 0,
+                "failure_summary": None,
+                "termination_reason": None,
+            },
+        },
+        "best_candidate_id": "000",
+    }
+
+    assert render_tree_text(tree) == ("Synthesis tree\n\n[000 H=1.00 R=1.00 BEST]\n")
+
+
+def test_render_tree_text_normalizes_truncates_and_falls_back_for_diagnostics() -> None:
+    long_summary = "x" * 61
+    tree: SynthesisTree = {
+        "candidates": {
+            "000": {
+                "id": "000",
+                "parent_id": None,
+                "heuristic": 0.0,
+                "terminal_reward": 0.0,
+                "iteration": 0,
+                "rollout_eligible": False,
+                "failure_count": 0,
+                "failure_summary": None,
+                "termination_reason": None,
+            },
+            "001": {
+                "id": "001",
+                "parent_id": "000",
+                "heuristic": 0.75,
+                "terminal_reward": 0.5,
+                "iteration": 1,
+                "rollout_eligible": True,
+                "failure_count": 1,
+                "failure_summary": " first\n  second\tthird ",
+                "termination_reason": "step_limit",
+            },
+            "002": {
+                "id": "002",
+                "parent_id": "000",
+                "heuristic": 0.0,
+                "terminal_reward": 0.0,
+                "iteration": 2,
+                "rollout_eligible": False,
+                "failure_count": 1,
+                "failure_summary": None,
+                "termination_reason": "contract_failure",
+            },
+            "003": {
+                "id": "003",
+                "parent_id": "000",
+                "heuristic": 0.0,
+                "terminal_reward": 0.0,
+                "iteration": 3,
+                "rollout_eligible": False,
+                "failure_count": 1,
+                "failure_summary": long_summary,
+                "termination_reason": "execution_failure",
+            },
+        },
+        "best_candidate_id": None,
+    }
+
+    rendered = render_tree_text(tree)
+
+    assert "[001 H=0.75 R=0.50 PARTIAL: first second third]" in rendered
+    assert "[002 H=0.00 R=0.00 FAIL: contract_failure]" in rendered
+    assert f"[003 H=0.00 R=0.00 FAIL: {'x' * 57}...]" in rendered
+    assert long_summary not in rendered
+
+
+def test_render_tree_text_keeps_roots_orphans_and_descendants() -> None:
+    tree: SynthesisTree = {
+        "candidates": {
+            "011": {
+                "id": "011",
+                "parent_id": "010",
+                "heuristic": 0.5,
+                "terminal_reward": 0.25,
+                "iteration": 11,
+                "rollout_eligible": True,
+                "failure_count": 0,
+                "failure_summary": None,
+                "termination_reason": "step_limit",
+            },
+            "010": {
+                "id": "010",
+                "parent_id": "missing",
+                "heuristic": 0.0,
+                "terminal_reward": 0.0,
+                "iteration": 10,
+                "rollout_eligible": False,
+                "failure_count": 1,
+                "failure_summary": "orphaned parent",
+                "termination_reason": "execution_failure",
+            },
+            "005": {
+                "id": "005",
+                "parent_id": None,
+                "heuristic": 0.2,
+                "terminal_reward": 0.1,
+                "iteration": 5,
+                "rollout_eligible": False,
+                "failure_count": 0,
+                "failure_summary": None,
+                "termination_reason": None,
+            },
+            "000": {
+                "id": "000",
+                "parent_id": None,
+                "heuristic": 0.0,
+                "terminal_reward": 0.0,
+                "iteration": 0,
+                "rollout_eligible": False,
+                "failure_count": 0,
+                "failure_summary": None,
+                "termination_reason": None,
+            },
+        },
+        "best_candidate_id": None,
+    }
+
+    assert render_tree_text(tree) == (
+        "Synthesis tree\n"
+        "\n"
+        "[000 H=0.00 R=0.00 ROOT]\n"
+        "\n"
+        "[005 H=0.20 R=0.10 ROOT]\n"
+        "\n"
+        "[010 H=0.00 R=0.00 FAIL: orphaned parent]\n"
+        "`-- [011 H=0.50 R=0.25 OK]\n"
+    )
+
+
+def test_render_tree_text_renders_root_only() -> None:
+    tree: SynthesisTree = {
+        "candidates": {
+            "000": {
+                "id": "000",
+                "parent_id": None,
+                "heuristic": 0.0,
+                "terminal_reward": 0.0,
+                "iteration": 0,
+                "rollout_eligible": False,
+                "failure_count": 0,
+                "failure_summary": None,
+                "termination_reason": None,
+            }
+        },
+        "best_candidate_id": None,
+    }
+
+    assert render_tree_text(tree) == "Synthesis tree\n\n[000 H=0.00 R=0.00 ROOT]\n"
+
+
+def test_write_tree_persists_unchanged_json_and_derived_text(store: ArtifactStore) -> None:
+    tree: SynthesisTree = {
+        "candidates": {
+            "000": {
+                "id": "000",
+                "parent_id": None,
+                "heuristic": 0.0,
+                "terminal_reward": 0.0,
+                "iteration": 0,
+                "rollout_eligible": False,
+                "failure_count": 0,
+                "failure_summary": None,
+                "termination_reason": None,
+            },
+            "001": {
+                "id": "001",
+                "parent_id": "000",
+                "heuristic": 1.0,
+                "terminal_reward": 1.0,
+                "iteration": 1,
+                "rollout_eligible": True,
+                "failure_count": 0,
+                "failure_summary": None,
+                "termination_reason": "environment_termination",
+            },
+        },
+        "ranking": {"ordered_candidate_ids": ["001"]},
+        "best_candidate_id": "001",
+    }
+
     store.write_tree(tree)
-    path = store.root / store.run_id / "tree.json"
-    assert path.exists()
-    data = json.loads(path.read_text())
-    assert data["best"] == "001"
+
+    json_path = store.run_dir / "tree.json"
+    text_path = store.run_dir / "tree.txt"
+    assert json.loads(json_path.read_text()) == tree
+    assert text_path.read_text() == (
+        "Synthesis tree\n\n[000 H=0.00 R=0.00 ROOT]\n`-- [001 H=1.00 R=1.00 BEST]\n"
+    )
+
+
+def test_write_tree_persists_json_when_text_rendering_fails(
+    store: ArtifactStore, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    tree: SynthesisTree = {
+        "candidates": {},
+        "best_candidate_id": None,
+    }
+
+    def failing_render_tree_text(t: SynthesisTree) -> str:
+        raise RecursionError("maximum recursion depth exceeded in tree rendering")
+
+    monkeypatch.setattr(
+        "autoharness.harness_as_policy.artifacts.render_tree_text", failing_render_tree_text
+    )
+
+    with caplog.at_level("WARNING"):
+        store.write_tree(tree)
+
+    json_path = store.run_dir / "tree.json"
+    text_path = store.run_dir / "tree.txt"
+    assert json_path.exists()
+    assert json.loads(json_path.read_text()) == tree
+    assert not text_path.exists()
+    assert "Failed to render tree text artifact" in caplog.text
 
 
 def test_write_best_policy(store: ArtifactStore) -> None:

@@ -21,7 +21,7 @@ The main package is `autoharness`; the active implementation lives under
 - **Execution**: generated policies are AST-validated and run in isolated Python subprocesses with
   CPU, memory, process, file-size, timeout, import, and output limits
 - **Environment**: built-in TextArena adapters live under
-  `src/autoharness/harness_as_policy/environments/`
+  `src/autoharness/environments/`
 - **Models**: Anthropic, OpenAI, or Google GenAI via LangChain `init_chat_model`
 - **Tracing**: optional Langfuse callback integration when `LANGFUSE_ENABLED` is truthy
 - **Configuration**: `pydantic-settings` plus `.env` loading through `python-dotenv`
@@ -42,15 +42,16 @@ The main package is `autoharness`; the active implementation lives under
 ├── artifacts/                          # generated synthesis/evaluation outputs
 ├── src/autoharness/
 │   ├── cli.py                          # top-level CLI: synthesize, evaluate, evaluate-baseline
+│   ├── environments/
+│   │   ├── __init__.py                 # package marker
+│   │   ├── base.py                     # EnvironmentAdapter protocol
+│   │   ├── blackjack.py                # TextArena Blackjack adapter
+│   │   ├── models.py                   # normalized environment transition models
+│   │   ├── registry.py                 # EnvironmentSpec and lookup
+│   │   └── tower_of_hanoi.py           # TextArena Tower of Hanoi adapter
 │   └── harness_as_policy/
 │       ├── artifacts.py                # atomic artifact persistence
 │       ├── config.py                   # Settings and AUTOHARNESS_* env configuration
-│       ├── environments/
-│       │   ├── __init__.py             # package marker
-│       │   ├── base.py                 # EnvironmentAdapter protocol
-│       │   ├── blackjack.py            # TextArena Blackjack adapter
-│       │   ├── registry.py             # EvaluationCase, EnvironmentSpec, lookup
-│       │   └── tower_of_hanoi.py       # TextArena Tower of Hanoi adapter
 │       ├── evaluation.py               # held-out generated-policy evaluation
 │       ├── executor.py                 # policy validation and subprocess execution sandbox
 │       ├── live_policy.py              # live LLM action baseline
@@ -59,23 +60,25 @@ The main package is `autoharness`; the active implementation lives under
 │       ├── rollout.py                  # single-policy rollout evaluator
 │       └── search.py                   # synthesis loop and candidate selection
 └── tests/
-    ├── test_cli.py
-    └── harness_as_policy/
+    └── autoharness/
         ├── environments/
         │   ├── test_base.py
         │   ├── test_blackjack.py
+        │   ├── test_models.py
         │   ├── test_registry.py
         │   └── test_tower_of_hanoi.py
-        ├── test_artifacts.py
-        ├── test_assessment.py
-        ├── test_config.py
-        ├── test_evaluation.py
-        ├── test_executor.py
-        ├── test_live_policy.py
-        ├── test_models.py
-        ├── test_refiner.py
-        ├── test_rollout.py
-        └── test_search.py
+        ├── test_cli.py
+        └── harness_as_policy/
+            ├── test_artifacts.py
+            ├── test_assessment.py
+            ├── test_config.py
+            ├── test_evaluation.py
+            ├── test_executor.py
+            ├── test_live_policy.py
+            ├── test_models.py
+            ├── test_refiner.py
+            ├── test_rollout.py
+            └── test_search.py
 ```
 
 Tests live under `tests/`, mirror the source hierarchy, and are named `test_<module>.py`.

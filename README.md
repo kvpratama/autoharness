@@ -230,15 +230,16 @@ Tests live under `tests/`, mirror the source hierarchy, and are named `test_<mod
 ```text
 src/autoharness/
 ├── cli.py
+├── environments/
+│   ├── __init__.py
+│   ├── base.py
+│   ├── blackjack.py
+│   ├── models.py
+│   ├── registry.py
+│   └── tower_of_hanoi.py
 └── harness_as_policy/
     ├── artifacts.py
     ├── config.py
-    ├── environments/
-    │   ├── __init__.py
-    │   ├── base.py
-    │   ├── blackjack.py
-    │   ├── registry.py
-    │   └── tower_of_hanoi.py
     ├── evaluation.py
     ├── executor.py
     ├── live_policy.py

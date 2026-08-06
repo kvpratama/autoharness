@@ -127,7 +127,7 @@ class TowerOfHanoiAdapter:
         for invalid-move signals.
 
         Args:
-            action: Raw action string from the policy (expected to be a
+            action: Raw action string submitted by the caller (expected to be a
                 bracketed move such as ``[A C]`` or ``[A, C]``).
 
         Returns:

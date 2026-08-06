@@ -95,7 +95,7 @@ uv sync
 uv run pytest
 
 # Run a focused test file
-uv run pytest tests/harness_as_policy/test_executor.py
+uv run pytest tests/autoharness/harness_as_policy/test_executor.py
 
 # Lint and format
 uv run ruff check .

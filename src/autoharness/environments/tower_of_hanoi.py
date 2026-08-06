@@ -7,7 +7,7 @@ from typing import Protocol, cast, runtime_checkable
 
 import textarena as ta
 
-from autoharness.harness_as_policy.models import StepResult
+from autoharness.environments.models import StepResult
 
 
 @runtime_checkable

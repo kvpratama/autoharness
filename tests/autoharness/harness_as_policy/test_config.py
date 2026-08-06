@@ -130,6 +130,24 @@ def test_effective_refinements_custom() -> None:
     assert settings.effective_refinements == 5
 
 
+@pytest.mark.parametrize(
+    ("env_id", "expected"),
+    [
+        ("TowerOfHanoi-v0", 1),
+        ("TowerOfHanoi-v0-medium", 1),
+        ("TowerOfHanoi-v0-hard", 1),
+        ("TowerOfHanoi-v0-hardcore", 1),
+        ("Blackjack-v0", 5),
+    ],
+)
+def test_effective_training_rollouts_uses_policy_default(env_id: str, expected: int) -> None:
+    assert _settings(env_id=env_id).effective_training_rollouts == expected
+
+
+def test_effective_training_rollouts_prefers_explicit_value() -> None:
+    assert _settings(env_id="Blackjack-v0", training_rollouts=7).effective_training_rollouts == 7
+
+
 def test_effective_refinements_full_search() -> None:
     """Full-search profile resolves to 256 refinements."""
     with patch.dict(os.environ, {"AUTOHARNESS_PROFILE": "full-search"}, clear=True):

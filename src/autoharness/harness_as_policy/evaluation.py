@@ -9,9 +9,9 @@ from dataclasses import asdict, dataclass
 from statistics import fmean
 from typing import cast
 
+from autoharness.environments.base import EnvironmentAdapter
+from autoharness.environments.registry import EnvironmentSpec
 from autoharness.harness_as_policy.assessment import generate_episode_seeds
-from autoharness.harness_as_policy.environments.base import EnvironmentAdapter
-from autoharness.harness_as_policy.environments.registry import EnvironmentSpec
 from autoharness.harness_as_policy.executor import PolicyExecutor, policy_randomness_metadata
 from autoharness.harness_as_policy.models import TerminationReason
 from autoharness.harness_as_policy.rollout import ActionProvider, ExecutorProtocol, RolloutEvaluator

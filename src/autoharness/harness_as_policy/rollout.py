@@ -5,7 +5,8 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import Protocol
 
-from autoharness.harness_as_policy.environments.base import EnvironmentAdapter
+from autoharness.environments.base import EnvironmentAdapter
+from autoharness.environments.models import StepResult
 from autoharness.harness_as_policy.executor import (
     ExecutionResult,
     PolicyExecutor,
@@ -15,7 +16,6 @@ from autoharness.harness_as_policy.models import (
     ActionAttempt,
     AttemptErrorPhase,
     RolloutResult,
-    StepResult,
     TerminationReason,
     heuristic,
 )

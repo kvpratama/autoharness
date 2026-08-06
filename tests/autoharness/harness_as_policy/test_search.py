@@ -9,6 +9,7 @@ from pathlib import Path
 
 import pytest
 
+from autoharness.environments.models import StepResult
 from autoharness.harness_as_policy.executor import ExecutionResult, policy_randomness_metadata
 from autoharness.harness_as_policy.models import (
     Candidate,
@@ -17,7 +18,6 @@ from autoharness.harness_as_policy.models import (
     ProviderInvocation,
     RefinementOutcome,
     RefinementTrace,
-    StepResult,
     TerminationReason,
 )
 from autoharness.harness_as_policy.refiner import (

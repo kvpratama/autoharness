@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pytest
 
+from autoharness.environments.models import StepResult
 from autoharness.harness_as_policy.artifacts import ArtifactStore, SynthesisTree, render_tree_text
 from autoharness.harness_as_policy.models import (
     ActionAttempt,
@@ -17,7 +18,6 @@ from autoharness.harness_as_policy.models import (
     RefinementOutcome,
     RefinementTrace,
     RolloutResult,
-    StepResult,
     TerminationReason,
 )
 

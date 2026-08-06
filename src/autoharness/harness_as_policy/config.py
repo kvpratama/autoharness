@@ -10,6 +10,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 from autoharness.harness_as_policy.models import Profile
 
 _VALID_LOG_LEVELS: frozenset[str] = frozenset(logging.getLevelNamesMapping().keys())
+_TRAINING_ROLLOUT_DEFAULTS: dict[str, int] = {"Blackjack-v0": 5}
 
 
 def _validate_log_level_value(v: object) -> object:
@@ -50,6 +51,13 @@ class Settings(BaseSettings):
     @property
     def effective_refinements(self) -> int:
         return self.refinements if self.refinements is not None else self.profile.refinements
+
+    @property
+    def effective_training_rollouts(self) -> int:
+        """Return the explicit rollout count or the policy default for this environment."""
+        if self.training_rollouts is not None:
+            return self.training_rollouts
+        return _TRAINING_ROLLOUT_DEFAULTS.get(self.env_id, 1)
 
 
 class _LogLevelOnlySettings(BaseSettings):

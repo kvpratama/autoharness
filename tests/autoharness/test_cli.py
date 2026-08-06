@@ -19,7 +19,8 @@ from autoharness.cli import (
     main,
     synthesize_cmd,
 )
-from autoharness.harness_as_policy.environments.registry import EnvironmentSpec
+from autoharness.environments.models import StepResult
+from autoharness.environments.registry import EnvironmentSpec
 from autoharness.harness_as_policy.evaluation import (
     EvaluationProtocol,
     EvaluationReport,
@@ -27,7 +28,7 @@ from autoharness.harness_as_policy.evaluation import (
 )
 from autoharness.harness_as_policy.executor import policy_randomness_metadata
 from autoharness.harness_as_policy.live_policy import LiveActionResult
-from autoharness.harness_as_policy.models import StepResult, TerminationReason
+from autoharness.harness_as_policy.models import TerminationReason
 
 
 @dataclass
@@ -252,6 +253,25 @@ def test_synthesize_cmd_preserves_explicit_training_rollouts() -> None:
     assert mock_synthesize.call_args.kwargs["training_rollouts"] == 7
 
 
+@pytest.mark.parametrize(("env_id", "expected"), [("TowerOfHanoi-v0", 1), ("Blackjack-v0", 5)])
+def test_synthesize_cmd_uses_policy_training_rollout_default(env_id: str, expected: int) -> None:
+    """Synthesis uses each environment's policy-owned default rollout count."""
+    with (
+        patch("autoharness.cli.Refiner"),
+        patch("autoharness.cli.synthesize") as mock_synthesize,
+        patch("sys.argv", ["autoharness", "synthesize", "--env", env_id, "--model", "test:model"]),
+    ):
+        mock_synthesize.return_value = {
+            "run_id": "test",
+            "stop_reason": "completed",
+            "best_candidate_id": "001",
+            "total_candidates": 1,
+        }
+        synthesize_cmd()
+
+    assert mock_synthesize.call_args.kwargs["training_rollouts"] == expected
+
+
 @pytest.mark.parametrize("training_rollouts", [0, -1])
 def test_synthesize_cmd_reports_invalid_training_rollouts_as_cli_error(
     capsys: pytest.CaptureFixture[str],
@@ -467,7 +487,7 @@ def _baseline_spec(adapters: list[FakeBaselineAdapter]) -> EnvironmentSpec:
         adapters.append(adapter)
         return adapter
 
-    return EnvironmentSpec("Fake-v0", "fake", create_adapter, 1, optimal_steps=1)
+    return EnvironmentSpec("Fake-v0", "fake", create_adapter, optimal_steps=1)
 
 
 def test_baseline_uses_all_protocol_seeds_and_persists_report(tmp_path: Path) -> None:

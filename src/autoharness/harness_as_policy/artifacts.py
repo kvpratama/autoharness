@@ -50,10 +50,10 @@ def _candidate_sort_key(
 def _candidate_status(
     candidate: CandidateRecord, candidate_id: str, best_candidate_id: str | None
 ) -> str:
-    if candidate["parent_id"] is None:
-        return "ROOT"
     if candidate_id == best_candidate_id:
         return "BEST"
+    if candidate["parent_id"] is None:
+        return "ROOT"
     if not candidate["rollout_eligible"]:
         return "FAIL"
     if candidate["failure_count"] > 0:

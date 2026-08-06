@@ -328,6 +328,27 @@ def test_render_tree_text_shows_hierarchy_statuses_and_iteration_order() -> None
     )
 
 
+def test_render_tree_text_prioritizes_best_over_root_for_selected_root_candidate() -> None:
+    tree: SynthesisTree = {
+        "candidates": {
+            "000": {
+                "id": "000",
+                "parent_id": None,
+                "heuristic": 1.0,
+                "terminal_reward": 1.0,
+                "iteration": 0,
+                "rollout_eligible": True,
+                "failure_count": 0,
+                "failure_summary": None,
+                "termination_reason": None,
+            },
+        },
+        "best_candidate_id": "000",
+    }
+
+    assert render_tree_text(tree) == ("Synthesis tree\n\n[000 H=1.00 R=1.00 BEST]\n")
+
+
 def test_render_tree_text_normalizes_truncates_and_falls_back_for_diagnostics() -> None:
     long_summary = "x" * 61
     tree: SynthesisTree = {

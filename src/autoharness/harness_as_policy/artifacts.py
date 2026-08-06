@@ -15,6 +15,99 @@ from autoharness.harness_as_policy.models import (
 )
 
 
+def _candidate_sort_key(
+    candidate_id: str, candidates: dict[str, dict[str, Any]]
+) -> tuple[int, str]:
+    return int(candidates[candidate_id]["iteration"]), candidate_id
+
+
+def _candidate_status(
+    candidate: dict[str, Any], candidate_id: str, best_candidate_id: str | None
+) -> str:
+    if candidate["parent_id"] is None:
+        return "ROOT"
+    if candidate_id == best_candidate_id:
+        return "BEST"
+    if not candidate["rollout_eligible"]:
+        return "FAIL"
+    if candidate["failure_count"] > 0:
+        return "PARTIAL"
+    return "OK"
+
+
+def _candidate_diagnostic(candidate: dict[str, Any], status: str) -> str | None:
+    if status not in {"FAIL", "PARTIAL"}:
+        return None
+    value = candidate["failure_summary"] or candidate["termination_reason"]
+    if value is None:
+        return None
+    normalized = " ".join(str(value).split())
+    if len(normalized) > 60:
+        return normalized[:57] + "..."
+    return normalized
+
+
+def _format_candidate(
+    candidate: dict[str, Any], candidate_id: str, best_candidate_id: str | None
+) -> str:
+    status = _candidate_status(candidate, candidate_id, best_candidate_id)
+    diagnostic = _candidate_diagnostic(candidate, status)
+    status_text = f"{status}: {diagnostic}" if diagnostic else status
+    return (
+        f"[{candidate_id} H={candidate['heuristic']:.2f} "
+        f"R={candidate['terminal_reward']:.2f} {status_text}]"
+    )
+
+
+def render_tree_text(tree: dict[str, Any]) -> str:
+    """Render one synthesis tree artifact as a compact text hierarchy.
+
+    Args:
+        tree: The same in-memory tree dictionary serialized to ``tree.json``.
+
+    Returns:
+        A deterministic tree diagram ending with a newline.
+    """
+    candidates: dict[str, dict[str, Any]] = tree["candidates"]
+    best_candidate_id: str | None = tree.get("best_candidate_id")
+    children: dict[str, list[str]] = {}
+    roots: list[str] = []
+
+    for candidate_id, candidate in candidates.items():
+        parent_id = candidate["parent_id"]
+        if parent_id is None or parent_id not in candidates:
+            roots.append(candidate_id)
+        else:
+            children.setdefault(parent_id, []).append(candidate_id)
+
+    roots.sort(key=lambda candidate_id: _candidate_sort_key(candidate_id, candidates))
+    for child_ids in children.values():
+        child_ids.sort(key=lambda candidate_id: _candidate_sort_key(candidate_id, candidates))
+
+    lines = ["Synthesis tree", ""]
+
+    def append_subtree(candidate_id: str, prefix: str, connector: str) -> None:
+        candidate = candidates[candidate_id]
+        lines.append(
+            f"{prefix}{connector}{_format_candidate(candidate, candidate_id, best_candidate_id)}"
+        )
+        child_ids = children.get(candidate_id, [])
+        if not connector:
+            child_prefix = prefix
+        else:
+            child_prefix = prefix + ("    " if connector == "`-- " else "|   ")
+        for index, child_id in enumerate(child_ids):
+            child_connector = "`-- " if index == len(child_ids) - 1 else "|-- "
+            append_subtree(child_id, child_prefix, child_connector)
+
+    for index, root_id in enumerate(roots):
+        if index > 0:
+            lines.append("")
+        append_subtree(root_id, "", "")
+
+    return "\n".join(lines) + "\n"
+
+
 class ArtifactStore:
     """Persists and loads synthesis run artifacts."""
 
@@ -52,8 +145,16 @@ class ArtifactStore:
     def write_config(self, config: dict[str, Any]) -> None:
         self._write_json(self._run_dir / "config.json", config)
 
+    def _write_text(self, path: Path, content: str) -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_suffix(".tmp")
+        tmp.write_text(content)
+        tmp.replace(path)
+
     def write_tree(self, tree: dict[str, Any]) -> None:
+        rendered = render_tree_text(tree)
         self._write_json(self._run_dir / "tree.json", tree)
+        self._write_text(self._run_dir / "tree.txt", rendered)
 
     def write_event(self, event: Event) -> None:
         path = self._run_dir / "events.jsonl"

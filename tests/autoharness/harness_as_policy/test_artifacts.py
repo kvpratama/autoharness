@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from autoharness.harness_as_policy.artifacts import ArtifactStore, render_tree_text
+from autoharness.harness_as_policy.artifacts import ArtifactStore, SynthesisTree, render_tree_text
 from autoharness.harness_as_policy.models import (
     ActionAttempt,
     CandidateAssessment,
@@ -268,7 +268,7 @@ def test_load_events_propagates_file_read_errors(
 
 
 def test_render_tree_text_shows_hierarchy_statuses_and_iteration_order() -> None:
-    tree = {
+    tree: SynthesisTree = {
         "candidates": {
             "003": {
                 "id": "003",
@@ -330,7 +330,7 @@ def test_render_tree_text_shows_hierarchy_statuses_and_iteration_order() -> None
 
 def test_render_tree_text_normalizes_truncates_and_falls_back_for_diagnostics() -> None:
     long_summary = "x" * 61
-    tree = {
+    tree: SynthesisTree = {
         "candidates": {
             "000": {
                 "id": "000",
@@ -389,7 +389,7 @@ def test_render_tree_text_normalizes_truncates_and_falls_back_for_diagnostics() 
 
 
 def test_render_tree_text_keeps_roots_orphans_and_descendants() -> None:
-    tree = {
+    tree: SynthesisTree = {
         "candidates": {
             "011": {
                 "id": "011",
@@ -452,7 +452,7 @@ def test_render_tree_text_keeps_roots_orphans_and_descendants() -> None:
 
 
 def test_render_tree_text_renders_root_only() -> None:
-    tree = {
+    tree: SynthesisTree = {
         "candidates": {
             "000": {
                 "id": "000",
@@ -473,7 +473,7 @@ def test_render_tree_text_renders_root_only() -> None:
 
 
 def test_write_tree_persists_unchanged_json_and_derived_text(store: ArtifactStore) -> None:
-    tree = {
+    tree: SynthesisTree = {
         "candidates": {
             "000": {
                 "id": "000",

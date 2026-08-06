@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from collections.abc import Mapping
 from pathlib import Path
-from typing import Any
+from typing import Any, TypedDict
 
 from autoharness.harness_as_policy.models import (
     CandidateAssessment,
@@ -15,14 +15,40 @@ from autoharness.harness_as_policy.models import (
 )
 
 
+class CandidateRecord(TypedDict, total=False):
+    """Schema for candidate record dictionaries in synthesis trees."""
+
+    id: str
+    parent_id: str | None
+    heuristic: float
+    terminal_reward: float
+    legal_action_count: int
+    termination_reason: str | None
+    failure_summary: str | None
+    iteration: int
+    expansion_count: int
+    failure_count: int
+    episode_count: int
+    rollout_eligible: bool
+    ranking: Any
+
+
+class SynthesisTree(TypedDict, total=False):
+    """Schema for synthesis tree dictionaries."""
+
+    candidates: Mapping[str, CandidateRecord]
+    ranking: Any
+    best_candidate_id: str | None
+
+
 def _candidate_sort_key(
-    candidate_id: str, candidates: dict[str, dict[str, Any]]
+    candidate_id: str, candidates: Mapping[str, CandidateRecord]
 ) -> tuple[int, str]:
     return int(candidates[candidate_id]["iteration"]), candidate_id
 
 
 def _candidate_status(
-    candidate: dict[str, Any], candidate_id: str, best_candidate_id: str | None
+    candidate: CandidateRecord, candidate_id: str, best_candidate_id: str | None
 ) -> str:
     if candidate["parent_id"] is None:
         return "ROOT"
@@ -35,7 +61,7 @@ def _candidate_status(
     return "OK"
 
 
-def _candidate_diagnostic(candidate: dict[str, Any], status: str) -> str | None:
+def _candidate_diagnostic(candidate: CandidateRecord, status: str) -> str | None:
     if status not in {"FAIL", "PARTIAL"}:
         return None
     value = candidate["failure_summary"] or candidate["termination_reason"]
@@ -48,7 +74,7 @@ def _candidate_diagnostic(candidate: dict[str, Any], status: str) -> str | None:
 
 
 def _format_candidate(
-    candidate: dict[str, Any], candidate_id: str, best_candidate_id: str | None
+    candidate: CandidateRecord, candidate_id: str, best_candidate_id: str | None
 ) -> str:
     status = _candidate_status(candidate, candidate_id, best_candidate_id)
     diagnostic = _candidate_diagnostic(candidate, status)
@@ -59,7 +85,7 @@ def _format_candidate(
     )
 
 
-def render_tree_text(tree: dict[str, Any]) -> str:
+def render_tree_text(tree: SynthesisTree) -> str:
     """Render one synthesis tree artifact as a compact text hierarchy.
 
     Args:
@@ -68,7 +94,7 @@ def render_tree_text(tree: dict[str, Any]) -> str:
     Returns:
         A deterministic tree diagram ending with a newline.
     """
-    candidates: dict[str, dict[str, Any]] = tree["candidates"]
+    candidates: Mapping[str, CandidateRecord] = tree["candidates"]
     best_candidate_id: str | None = tree.get("best_candidate_id")
     children: dict[str, list[str]] = {}
     roots: list[str] = []
@@ -151,7 +177,7 @@ class ArtifactStore:
         tmp.write_text(content)
         tmp.replace(path)
 
-    def write_tree(self, tree: dict[str, Any]) -> None:
+    def write_tree(self, tree: SynthesisTree) -> None:
         rendered = render_tree_text(tree)
         self._write_json(self._run_dir / "tree.json", tree)
         self._write_text(self._run_dir / "tree.txt", rendered)

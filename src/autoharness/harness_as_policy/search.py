@@ -9,7 +9,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Literal, TypedDict
 
-from autoharness.harness_as_policy.artifacts import ArtifactStore
+from autoharness.harness_as_policy.artifacts import ArtifactStore, SynthesisTree
 from autoharness.harness_as_policy.assessment import (
     CandidateAssessor,
     assessment_is_rollout_eligible,
@@ -536,7 +536,7 @@ def synthesize(
     if best_id:
         logger.info("Best candidate: %s (H=%.3f)", best_id, candidates[best_id].heuristic)
 
-    tree_data: dict[str, Any] = {
+    tree_data: SynthesisTree = {
         "candidates": {
             cid: {
                 "id": c.id,

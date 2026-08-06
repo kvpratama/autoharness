@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any, TypedDict
@@ -13,6 +14,8 @@ from autoharness.harness_as_policy.models import (
     Event,
     RefinementTrace,
 )
+
+logger = logging.getLogger(__name__)
 
 
 class CandidateRecord(TypedDict, total=False):
@@ -178,9 +181,17 @@ class ArtifactStore:
         tmp.replace(path)
 
     def write_tree(self, tree: SynthesisTree) -> None:
-        rendered = render_tree_text(tree)
+        """Persist canonical synthesis tree JSON and best-effort text diagram.
+
+        Args:
+            tree: The synthesis tree structure to record.
+        """
         self._write_json(self._run_dir / "tree.json", tree)
-        self._write_text(self._run_dir / "tree.txt", rendered)
+        try:
+            rendered = render_tree_text(tree)
+            self._write_text(self._run_dir / "tree.txt", rendered)
+        except Exception:
+            logger.warning("Failed to render tree text artifact", exc_info=True)
 
     def write_event(self, event: Event) -> None:
         path = self._run_dir / "events.jsonl"

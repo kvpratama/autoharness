@@ -533,6 +533,32 @@ def test_write_tree_persists_unchanged_json_and_derived_text(store: ArtifactStor
     )
 
 
+def test_write_tree_persists_json_when_text_rendering_fails(
+    store: ArtifactStore, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    tree: SynthesisTree = {
+        "candidates": {},
+        "best_candidate_id": None,
+    }
+
+    def failing_render_tree_text(t: SynthesisTree) -> str:
+        raise RecursionError("maximum recursion depth exceeded in tree rendering")
+
+    monkeypatch.setattr(
+        "autoharness.harness_as_policy.artifacts.render_tree_text", failing_render_tree_text
+    )
+
+    with caplog.at_level("WARNING"):
+        store.write_tree(tree)
+
+    json_path = store.run_dir / "tree.json"
+    text_path = store.run_dir / "tree.txt"
+    assert json_path.exists()
+    assert json.loads(json_path.read_text()) == tree
+    assert not text_path.exists()
+    assert "Failed to render tree text artifact" in caplog.text
+
+
 def test_write_best_policy(store: ArtifactStore) -> None:
     """write_best_policy persists best.py."""
     source = (

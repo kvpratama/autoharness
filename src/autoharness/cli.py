@@ -15,13 +15,13 @@ from typing import TypedDict, cast
 from dotenv import load_dotenv
 from pydantic import ValidationError
 
-from autoharness.harness_as_policy.artifacts import ArtifactStore
-from autoharness.harness_as_policy.config import Settings, _LogLevelOnlySettings
-from autoharness.harness_as_policy.environments.base import EnvironmentAdapter
-from autoharness.harness_as_policy.environments.registry import (
+from autoharness.environments.base import EnvironmentAdapter
+from autoharness.environments.registry import (
     EnvironmentSpec,
     get_environment_spec,
 )
+from autoharness.harness_as_policy.artifacts import ArtifactStore
+from autoharness.harness_as_policy.config import Settings, _LogLevelOnlySettings
 from autoharness.harness_as_policy.evaluation import (
     EvaluationProtocol,
     EvaluationReport,
@@ -255,11 +255,7 @@ def synthesize_cmd(
         max_source_size=settings.max_source_size,
         model_id=settings.model,
         environment_seed=settings.environment_seed,
-        training_rollouts=(
-            spec.default_training_rollouts
-            if settings.training_rollouts is None
-            else settings.training_rollouts
-        ),
+        training_rollouts=settings.effective_training_rollouts,
     )
     print(f"Run ID: {result.get('run_id', 'unknown')}")
     print(f"Stop reason: {result.get('stop_reason', 'unknown')}")

@@ -9,6 +9,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Literal, TypedDict
 
+from autoharness.environments.base import EnvironmentAdapter
 from autoharness.harness_as_policy.artifacts import ArtifactStore, SynthesisTree
 from autoharness.harness_as_policy.assessment import (
     CandidateAssessor,
@@ -18,7 +19,6 @@ from autoharness.harness_as_policy.assessment import (
     generate_episode_seeds,
     should_refine_legal_action,
 )
-from autoharness.harness_as_policy.environments.base import EnvironmentAdapter
 from autoharness.harness_as_policy.executor import PolicyExecutor, policy_randomness_metadata
 from autoharness.harness_as_policy.models import (
     Candidate,

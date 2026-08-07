@@ -6,9 +6,9 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from functools import partial
 
-from autoharness.harness_as_policy.environments.base import EnvironmentAdapter
-from autoharness.harness_as_policy.environments.blackjack import BlackjackAdapter
-from autoharness.harness_as_policy.environments.tower_of_hanoi import (
+from autoharness.environments.base import EnvironmentAdapter
+from autoharness.environments.blackjack import BlackjackAdapter
+from autoharness.environments.tower_of_hanoi import (
     DIFFICULTY_MAP,
     TowerOfHanoiAdapter,
 )
@@ -18,12 +18,11 @@ AdapterFactory = Callable[[], EnvironmentAdapter]
 
 @dataclass(frozen=True)
 class EnvironmentSpec:
-    """Immutable configuration for one supported environment ID."""
+    """Immutable intrinsic configuration for one supported environment ID."""
 
     env_id: str
     family: str
     create_adapter: AdapterFactory
-    default_training_rollouts: int
     optimal_steps: int = 0
 
 
@@ -32,7 +31,6 @@ ENVIRONMENTS: dict[str, EnvironmentSpec] = {
         env_id=env_id,
         family="tower-of-hanoi",
         create_adapter=partial(TowerOfHanoiAdapter, difficulty=difficulty),
-        default_training_rollouts=1,
         optimal_steps=optimal_steps,
     )
     for difficulty, (env_id, _max_steps, optimal_steps) in DIFFICULTY_MAP.items()
@@ -41,7 +39,6 @@ ENVIRONMENTS["Blackjack-v0"] = EnvironmentSpec(
     env_id="Blackjack-v0",
     family="blackjack",
     create_adapter=BlackjackAdapter,
-    default_training_rollouts=5,
 )
 
 

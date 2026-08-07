@@ -6,11 +6,11 @@ import random
 import textwrap
 from dataclasses import dataclass, field, replace
 
+from autoharness.environments.models import StepResult
 from autoharness.harness_as_policy.executor import ExecutionResult, derive_policy_seed
 from autoharness.harness_as_policy.models import (
     ActionAttempt,
     AttemptErrorPhase,
-    StepResult,
     TerminationReason,
 )
 from autoharness.harness_as_policy.rollout import RolloutEvaluator

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Protocol
 
-from autoharness.harness_as_policy.environments.base import EnvironmentAdapter
+from autoharness.environments.base import EnvironmentAdapter
 
 
 def test_protocol_is_runtime_checkable() -> None:

@@ -15,7 +15,6 @@ from autoharness.harness_as_policy.models import (
     Event,
     Profile,
     RolloutResult,
-    StepResult,
     TerminationReason,
     heuristic,
 )
@@ -202,20 +201,6 @@ def test_action_attempt_requires_keyword_arguments() -> None:
         "policy_seed",
     }
     assert all(parameter.kind is Parameter.KEYWORD_ONLY for parameter in parameters)
-
-
-def test_step_result_fields() -> None:
-    """StepResult stores observation, action, legality, reward, feedback."""
-    step = StepResult(
-        observation="[A B C]",
-        action="[A C]",
-        is_legal=True,
-        reward=0.0,
-        terminated=False,
-        feedback="",
-    )
-    assert step.is_legal
-    assert step.action == "[A C]"
 
 
 def test_profile_values() -> None:

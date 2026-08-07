@@ -4,12 +4,12 @@ from __future__ import annotations
 
 from typing import Protocol, runtime_checkable
 
-from autoharness.harness_as_policy.models import StepResult
+from autoharness.environments.models import StepResult
 
 
 @runtime_checkable
 class EnvironmentAdapter(Protocol):
-    """Protocol for environment adapters used by the optimizer and evaluators."""
+    """Protocol for environment adapters used by environment consumers."""
 
     @property
     def env_id(self) -> str:
@@ -25,7 +25,7 @@ class EnvironmentAdapter(Protocol):
 
     @property
     def max_steps(self) -> int:
-        """Maximum number of policy actions in one rollout."""
+        """Maximum number of submitted actions in one interaction."""
 
     def create(self) -> None:
         """Create the underlying environment instance."""

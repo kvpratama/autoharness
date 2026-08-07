@@ -7,7 +7,7 @@ from typing import Protocol, cast, runtime_checkable
 
 import textarena as ta
 
-from autoharness.harness_as_policy.models import StepResult
+from autoharness.environments.models import StepResult
 
 
 @runtime_checkable
@@ -127,7 +127,7 @@ class TowerOfHanoiAdapter:
         for invalid-move signals.
 
         Args:
-            action: Raw action string from the policy (expected to be a
+            action: Raw action string submitted by the caller (expected to be a
                 bracketed move such as ``[A C]`` or ``[A, C]``).
 
         Returns:

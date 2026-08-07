@@ -213,7 +213,7 @@ analysis.
 uv run pytest
 
 # Run a focused test file
-uv run pytest tests/harness_as_policy/test_executor.py
+uv run pytest tests/autoharness/harness_as_policy/test_executor.py
 
 # Lint and format
 uv run ruff check .
@@ -230,15 +230,16 @@ Tests live under `tests/`, mirror the source hierarchy, and are named `test_<mod
 ```text
 src/autoharness/
 ├── cli.py
+├── environments/
+│   ├── __init__.py
+│   ├── base.py
+│   ├── blackjack.py
+│   ├── models.py
+│   ├── registry.py
+│   └── tower_of_hanoi.py
 └── harness_as_policy/
     ├── artifacts.py
     ├── config.py
-    ├── environments/
-    │   ├── __init__.py
-    │   ├── base.py
-    │   ├── blackjack.py
-    │   ├── registry.py
-    │   └── tower_of_hanoi.py
     ├── evaluation.py
     ├── executor.py
     ├── live_policy.py

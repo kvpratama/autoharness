@@ -7,9 +7,10 @@ from typing import cast
 
 import pytest
 
+from autoharness.environments.models import StepResult
+from autoharness.environments.registry import EnvironmentSpec
 from autoharness.harness_as_policy import evaluation
 from autoharness.harness_as_policy.assessment import generate_episode_seeds
-from autoharness.harness_as_policy.environments.registry import EnvironmentSpec
 from autoharness.harness_as_policy.evaluation import (
     EvaluationProtocol,
     EvaluationReport,
@@ -23,7 +24,7 @@ from autoharness.harness_as_policy.executor import (
     derive_policy_seed,
     policy_randomness_metadata,
 )
-from autoharness.harness_as_policy.models import StepResult, TerminationReason
+from autoharness.harness_as_policy.models import TerminationReason
 
 
 @dataclass
@@ -167,7 +168,7 @@ def test_evaluate_policy_uses_20_fresh_seeded_adapters() -> None:
     executor = FakeExecutor()
     report = evaluate_policy(
         "source",
-        EnvironmentSpec("Exact-v0", "fake", factory, 1, 1),
+        EnvironmentSpec("Exact-v0", "fake", factory, optimal_steps=1),
         protocol,
         executor,
     )
@@ -197,7 +198,7 @@ def test_evaluate_policy_records_factory_failure_and_continues() -> None:
     protocol = EvaluationProtocol.create("Exact-v0", 9, [])
     report = evaluate_policy(
         "source",
-        EnvironmentSpec("Exact-v0", "fake", factory, 1, 1),
+        EnvironmentSpec("Exact-v0", "fake", factory, optimal_steps=1),
         protocol,
         FakeExecutor(),
     )

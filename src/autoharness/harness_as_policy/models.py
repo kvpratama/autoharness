@@ -6,6 +6,8 @@ import functools
 from dataclasses import dataclass, field
 from enum import StrEnum
 
+from autoharness.environments.models import StepResult
+
 
 @dataclass
 class ProviderInvocation:
@@ -62,18 +64,6 @@ class Profile(StrEnum):
             "low-cost": 32,
             "full-search": 256,
         }[self.value]
-
-
-@dataclass
-class StepResult:
-    """Result of a single step in a rollout."""
-
-    observation: str
-    action: str | None
-    is_legal: bool
-    reward: float
-    terminated: bool
-    feedback: str
 
 
 class AttemptErrorPhase(StrEnum):

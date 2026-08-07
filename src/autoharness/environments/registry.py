@@ -8,6 +8,7 @@ from functools import partial
 
 from autoharness.environments.base import EnvironmentAdapter
 from autoharness.environments.blackjack import BlackjackAdapter
+from autoharness.environments.frozen_lake import FrozenLakeAdapter
 from autoharness.environments.tower_of_hanoi import (
     DIFFICULTY_MAP,
     TowerOfHanoiAdapter,
@@ -39,6 +40,11 @@ ENVIRONMENTS["Blackjack-v0"] = EnvironmentSpec(
     env_id="Blackjack-v0",
     family="blackjack",
     create_adapter=BlackjackAdapter,
+)
+ENVIRONMENTS["FrozenLake-v0"] = EnvironmentSpec(
+    env_id="FrozenLake-v0",
+    family="frozen-lake",
+    create_adapter=FrozenLakeAdapter,
 )
 
 

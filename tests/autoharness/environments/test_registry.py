@@ -5,6 +5,7 @@ from __future__ import annotations
 import pytest
 
 from autoharness.environments.blackjack import BlackjackAdapter
+from autoharness.environments.frozen_lake import FrozenLakeAdapter
 from autoharness.environments.registry import get_environment_spec
 from autoharness.environments.tower_of_hanoi import (
     DIFFICULTY_MAP,
@@ -26,6 +27,13 @@ def test_blackjack_resolves_with_intrinsic_metadata() -> None:
     assert isinstance(spec.create_adapter(), BlackjackAdapter)
     assert spec.optimal_steps == 0
     assert spec.family == "blackjack"
+
+
+def test_frozen_lake_resolves_with_intrinsic_metadata() -> None:
+    spec = get_environment_spec("FrozenLake-v0")
+    assert isinstance(spec.create_adapter(), FrozenLakeAdapter)
+    assert spec.optimal_steps == 0
+    assert spec.family == "frozen-lake"
 
 
 def test_unknown_environment_lists_valid_ids() -> None:

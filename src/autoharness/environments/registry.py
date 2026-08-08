@@ -13,6 +13,7 @@ from autoharness.environments.tower_of_hanoi import (
     DIFFICULTY_MAP,
     TowerOfHanoiAdapter,
 )
+from autoharness.environments.twenty_forty_eight import TwentyFortyEightAdapter
 
 AdapterFactory = Callable[[], EnvironmentAdapter]
 
@@ -45,6 +46,11 @@ ENVIRONMENTS["FrozenLake-v0"] = EnvironmentSpec(
     env_id="FrozenLake-v0",
     family="frozen-lake",
     create_adapter=FrozenLakeAdapter,
+)
+ENVIRONMENTS["2048-v0"] = EnvironmentSpec(
+    env_id="2048-v0",
+    family="2048",
+    create_adapter=TwentyFortyEightAdapter,
 )
 
 

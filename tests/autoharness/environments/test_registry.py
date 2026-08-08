@@ -11,6 +11,7 @@ from autoharness.environments.tower_of_hanoi import (
     DIFFICULTY_MAP,
     TowerOfHanoiAdapter,
 )
+from autoharness.environments.twenty_forty_eight import TwentyFortyEightAdapter
 
 
 @pytest.mark.parametrize("difficulty", list(DIFFICULTY_MAP))
@@ -34,6 +35,13 @@ def test_frozen_lake_resolves_with_intrinsic_metadata() -> None:
     assert isinstance(spec.create_adapter(), FrozenLakeAdapter)
     assert spec.optimal_steps == 0
     assert spec.family == "frozen-lake"
+
+
+def test_twenty_forty_eight_resolves_with_intrinsic_metadata() -> None:
+    spec = get_environment_spec("2048-v0")
+    assert isinstance(spec.create_adapter(), TwentyFortyEightAdapter)
+    assert spec.optimal_steps == 0
+    assert spec.family == "2048"
 
 
 def test_unknown_environment_lists_valid_ids() -> None:

@@ -1,7 +1,7 @@
 # AutoHarness
 
 AutoHarness experiments with harness-as-policy synthesis for game-playing agents. The current
-implementation targets TextArena Tower of Hanoi, Blackjack, and FrozenLake environments: it asks an
+implementation targets TextArena Tower of Hanoi, Blackjack, FrozenLake, and 2048 environments: it asks an
 LLM to refine a Python policy, AutoHarness executes that policy in a constrained subprocess,
 evaluates it against the environment, and keeps the best candidates as run artifacts.
 
@@ -71,6 +71,15 @@ For FrozenLake:
 ```bash
 uv run autoharness synthesize \
   --env FrozenLake-v0 \
+  --model <provider:model> \
+  --environment-seed 0
+```
+
+For 2048:
+
+```bash
+uv run autoharness synthesize \
+  --env 2048-v0 \
   --model <provider:model> \
   --environment-seed 0
 ```
@@ -246,7 +255,8 @@ src/autoharness/
 │   ├── frozen_lake.py
 │   ├── models.py
 │   ├── registry.py
-│   └── tower_of_hanoi.py
+│   ├── tower_of_hanoi.py
+│   └── twenty_forty_eight.py
 └── harness_as_policy/
     ├── artifacts.py
     ├── config.py

@@ -132,23 +132,6 @@ class RolloutEvaluator:
                 )
             action = outcome.output
             attempts += 1
-            if checks_legality and outcome.is_legal_action is not True:
-                failure = (
-                    f"Policy legality checker rejected action {action!r} "
-                    f"(checker={outcome.is_legal_action!r})"
-                )
-                return self._record_failure(
-                    steps=steps,
-                    attempt_records=attempt_records,
-                    attempts=attempts,
-                    reason=TerminationReason.POLICY_REJECTED_ACTION,
-                    observation=observation,
-                    action=action,
-                    policy_legal=False,
-                    feedback=failure,
-                    error_phase=AttemptErrorPhase.POLICY_LEGALITY,
-                    policy_seed=outcome.policy_seed,
-                )
             try:
                 step = self._adapter.step(action)
             except Exception as error:
@@ -165,6 +148,51 @@ class RolloutEvaluator:
                     error_phase=AttemptErrorPhase.ENVIRONMENT_STEP,
                     policy_seed=outcome.policy_seed,
                 )
+            if checks_legality and outcome.is_legal_action is not True:
+                policy_legal = (
+                    outcome.is_legal_action if isinstance(outcome.is_legal_action, bool) else False
+                )
+                attempt_records.append(
+                    ActionAttempt(
+                        observation=observation,
+                        action=action,
+                        policy_legal=policy_legal,
+                        environment_legal=step.is_legal,
+                        resulting_observation=step.observation,
+                        reward=step.reward,
+                        terminated=step.terminated,
+                        feedback=step.feedback,
+                        error_phase=AttemptErrorPhase.POLICY_LEGALITY,
+                        policy_seed=outcome.policy_seed,
+                    )
+                )
+                if not step.is_legal:
+                    failure = (
+                        f"Policy legality checker rejected action {action!r} "
+                        f"(checker={outcome.is_legal_action!r})"
+                    )
+                    return self._result(
+                        steps,
+                        attempt_records,
+                        attempts,
+                        TerminationReason.POLICY_REJECTED_ACTION,
+                        failure,
+                        observation,
+                    )
+                else:
+                    detail = f"; environment feedback: {step.feedback}" if step.feedback else ""
+                    failure = (
+                        f"Legality disagreement: checker={outcome.is_legal_action!r}, "
+                        f"environment=True{detail}"
+                    )
+                    return self._result(
+                        steps,
+                        attempt_records,
+                        attempts,
+                        TerminationReason.LEGALITY_DISAGREEMENT,
+                        failure,
+                        observation,
+                    )
             steps.append(step)
             attempt_records.append(
                 ActionAttempt(

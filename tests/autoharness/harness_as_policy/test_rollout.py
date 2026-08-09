@@ -278,16 +278,15 @@ def test_contract_failure_records_board_and_error_phase() -> None:
     ]
 
 
-def test_checker_rejection_records_action_without_environment_result() -> None:
-    result = RolloutEvaluator(FakeAdapter(), FakeExecutor([("[A C]", False)])).evaluate(
-        "source", seed=0
-    )
+def test_checker_rejection_records_action_with_environment_result() -> None:
+    adapter = FakeAdapter([StepResult("obs", "[A C]", False, 0.0, True, "illegal")])
+    result = RolloutEvaluator(adapter, FakeExecutor([("[A C]", False)])).evaluate("source", seed=0)
 
     attempt = result.attempts[0]
     assert attempt.observation == "initial observation"
     assert attempt.action == "[A C]"
     assert attempt.policy_legal is False
-    assert attempt.environment_legal is None
+    assert attempt.environment_legal is False
     assert attempt.error_phase == AttemptErrorPhase.POLICY_LEGALITY
     assert attempt.policy_seed == derive_policy_seed(0, 0)
 
@@ -480,14 +479,14 @@ def test_legal_action_count_tracked() -> None:
     assert result.legal_action_count == 1
 
 
-def test_checker_rejection_stops_before_environment_step() -> None:
-    """A checker-rejected action fails closed without applying an environment step."""
-    adapter = FakeAdapter()
+def test_checker_rejection_when_environment_agrees_records_policy_rejection() -> None:
+    """A checker-rejected action that is also illegal in the environment fails closed."""
+    adapter = FakeAdapter([StepResult("obs", "[A C]", False, 0.0, True, "illegal")])
     executor = FakeExecutor(step_results=[("[A C]", False)])
 
     result = RolloutEvaluator(adapter=adapter, executor=executor).evaluate("dummy source", seed=0)
 
-    assert adapter.step_calls == []
+    assert adapter.step_calls == ["[A C]"]
     assert result.steps == []
     assert result.heuristic == 0.0
     assert result.terminal_reward == 0.0
@@ -495,6 +494,23 @@ def test_checker_rejection_stops_before_environment_step() -> None:
     assert result.termination_reason.value == "policy_rejected_action"
     assert result.last_observation == "initial observation"
     assert "'[A C]'" in (result.failure_summary or "")
+
+
+def test_checker_rejection_when_environment_disagrees_records_legality_disagreement() -> None:
+    """A checker-rejected action that is legal in environment records disagreement."""
+    adapter = FakeAdapter([StepResult("obs", "[A C]", True, 0.0, False, "ok")])
+    executor = FakeExecutor(step_results=[("[A C]", False)])
+
+    result = RolloutEvaluator(adapter=adapter, executor=executor).evaluate("dummy source", seed=0)
+
+    assert adapter.step_calls == ["[A C]"]
+    assert result.steps == []
+    assert result.heuristic == 0.0
+    assert result.terminal_reward == 0.0
+    assert result.legal_action_count == 0
+    assert result.termination_reason.value == "legality_disagreement"
+    assert "checker=False" in (result.failure_summary or "")
+    assert "environment=True" in (result.failure_summary or "")
 
 
 def test_checker_environment_legality_disagreement_returns_zero() -> None:

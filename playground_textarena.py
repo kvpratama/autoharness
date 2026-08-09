@@ -16,11 +16,15 @@ import sys
 from typing import Any
 
 from autoharness.environments.blackjack import BlackjackAdapter
+from autoharness.environments.frozen_lake import FrozenLakeAdapter
 from autoharness.environments.tower_of_hanoi import TowerOfHanoiAdapter
+from autoharness.environments.twenty_forty_eight import TwentyFortyEightAdapter
 
 ENV_REGISTRY: dict[str, tuple[type, dict[str, Any]]] = {
     "blackjack": (BlackjackAdapter, {}),
     "tower_of_hanoi": (TowerOfHanoiAdapter, {"difficulty": "v0"}),
+    "frozen_lake": (FrozenLakeAdapter, {}),
+    "twenty_forty_eight": (TwentyFortyEightAdapter, {}),
 }
 
 
@@ -38,7 +42,7 @@ def resolve_env(spec: str) -> Any:
         print(f"Unknown environment: {name!r}. Available: {keys}", file=sys.stderr)
         sys.exit(1)
     cls, kwargs = entry
-    if difficulty is not None:
+    if difficulty is not None and "difficulty" in kwargs:
         kwargs = {**kwargs, "difficulty": difficulty}
     return cls(**kwargs)
 

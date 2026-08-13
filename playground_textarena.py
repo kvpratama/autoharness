@@ -15,6 +15,7 @@ import argparse
 import sys
 from typing import Any
 
+from autoharness.environments.bandit import BanditAdapter
 from autoharness.environments.blackjack import BlackjackAdapter
 from autoharness.environments.frozen_lake import FrozenLakeAdapter
 from autoharness.environments.tower_of_hanoi import TowerOfHanoiAdapter
@@ -25,6 +26,7 @@ ENV_REGISTRY: dict[str, tuple[type, dict[str, Any]]] = {
     "tower_of_hanoi": (TowerOfHanoiAdapter, {"difficulty": "v0"}),
     "frozen_lake": (FrozenLakeAdapter, {}),
     "twenty_forty_eight": (TwentyFortyEightAdapter, {}),
+    "bandit": (BanditAdapter, {}),
 }
 
 

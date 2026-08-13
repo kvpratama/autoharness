@@ -1,7 +1,8 @@
 ## Project Overview
 
 AutoHarness is a Python implementation of a harness-as-policy synthesis loop for game-playing
-agents. The current implementation targets TextArena environments (Tower of Hanoi, Blackjack): it asks an LLM
+agents. The current implementation targets TextArena environments (Tower of Hanoi, Blackjack, FrozenLake,
+2048, and Bandit): it asks an LLM
 to refine a Python policy module, executes the generated `propose_action(observation: str) -> str`
 function in an isolated subprocess, rolls the policy out against the environment, ranks candidates,
 and persists run artifacts for later evaluation.
@@ -44,6 +45,7 @@ The main package is `autoharness`; the active implementation lives under
 │   ├── cli.py                          # top-level CLI: synthesize, evaluate, evaluate-baseline
 │   ├── environments/
 │   │   ├── __init__.py                 # package marker
+│   │   ├── bandit.py                   # TextArena Bandit adapters
 │   │   ├── base.py                     # EnvironmentAdapter protocol
 │   │   ├── blackjack.py                # TextArena Blackjack adapter
 │   │   ├── models.py                   # normalized environment transition models
@@ -63,6 +65,7 @@ The main package is `autoharness`; the active implementation lives under
     └── autoharness/
         ├── environments/
         │   ├── test_base.py
+        │   ├── test_bandit.py
         │   ├── test_blackjack.py
         │   ├── test_models.py
         │   ├── test_registry.py
@@ -135,6 +138,7 @@ Important settings:
 - `AUTOHARNESS_THOMPSON_SEED`: defaults to `42`
 - `AUTOHARNESS_EXECUTION_TIMEOUT`: defaults to `10`
 - `AUTOHARNESS_MAX_SOURCE_SIZE`: defaults to `32768`
+- `AUTOHARNESS_TRAINING_ROLLOUTS`: optional episode count; defaults to 5 for Bandit variants
 - `AUTOHARNESS_LOG_LEVEL`: optional logging level
 - `AUTOHARNESS_INPUT_PRICE_PER_MILLION` and `AUTOHARNESS_OUTPUT_PRICE_PER_MILLION`: optional
   baseline cost inputs

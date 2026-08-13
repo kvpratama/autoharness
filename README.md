@@ -1,7 +1,7 @@
 # AutoHarness
 
 AutoHarness experiments with harness-as-policy synthesis for game-playing agents. The current
-implementation targets TextArena Tower of Hanoi, Blackjack, FrozenLake, and 2048 environments: it asks an
+implementation targets TextArena Tower of Hanoi, Blackjack, FrozenLake, 2048, and Bandit environments: it asks an
 LLM to refine a Python policy, AutoHarness executes that policy in a constrained subprocess,
 evaluates it against the environment, and keeps the best candidates as run artifacts.
 
@@ -84,6 +84,15 @@ uv run autoharness synthesize \
   --environment-seed 0
 ```
 
+For Bandit:
+
+```bash
+uv run autoharness synthesize \
+  --env Bandit-v0 \
+  --model <provider:model> \
+  --environment-seed 0
+```
+
 The command prints a run ID and writes artifacts under `artifacts/<run-id>/`.
 
 Useful options:
@@ -97,7 +106,8 @@ Useful options:
 - `--execution-timeout N`: set the per-action policy execution timeout in seconds
 - `--max-source-size N`: cap generated policy source size in bytes
 - `--environment-seed N`: base seed for shared candidate-assessment episodes
-- `--training-rollouts N`: episodes per candidate (defaults to one for Hanoi and five for Blackjack)
+- `--training-rollouts N`: episodes per candidate (defaults to one for Hanoi, five for Blackjack,
+  and five for Bandit)
 
 Every candidate in a run uses the same resolved ordered training-seed list. `--seed` controls only
 Thompson sampling. Blackjack final evaluation uses the same persisted 20-episode held-out protocol

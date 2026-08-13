@@ -12,8 +12,8 @@ from autoharness.harness_as_policy.models import Profile
 _VALID_LOG_LEVELS: frozenset[str] = frozenset(logging.getLevelNamesMapping().keys())
 _TRAINING_ROLLOUT_DEFAULTS: dict[str, int] = {
     "Blackjack-v0": 5,
-    "Bandit-v0": 20,
-    "Bandit-v0-hard": 20,
+    "Bandit-v0": 5,
+    "Bandit-v0-hard": 5,
 }
 
 

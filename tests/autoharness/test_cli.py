@@ -258,8 +258,8 @@ def test_synthesize_cmd_preserves_explicit_training_rollouts() -> None:
     [
         ("TowerOfHanoi-v0", 1),
         ("Blackjack-v0", 5),
-        ("Bandit-v0", 20),
-        ("Bandit-v0-hard", 20),
+        ("Bandit-v0", 5),
+        ("Bandit-v0-hard", 5),
     ],
 )
 def test_synthesize_cmd_uses_policy_training_rollout_default(env_id: str, expected: int) -> None:

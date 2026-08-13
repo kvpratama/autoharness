@@ -106,8 +106,8 @@ Useful options:
 - `--execution-timeout N`: set the per-action policy execution timeout in seconds
 - `--max-source-size N`: cap generated policy source size in bytes
 - `--environment-seed N`: base seed for shared candidate-assessment episodes
-- `--training-rollouts N`: episodes per candidate (defaults to one for Hanoi, five for Blackjack,
-  and five for Bandit)
+- `--training-rollouts N`: episodes per candidate; defaults to five for Blackjack-v0, Bandit-v0,
+  and Bandit-v0-hard, and one (fallback) for TowerOfHanoi-v0, FrozenLake-v0, and 2048-v0
 
 Every candidate in a run uses the same resolved ordered training-seed list. `--seed` controls only
 Thompson sampling. Blackjack final evaluation uses the same persisted 20-episode held-out protocol
@@ -260,6 +260,7 @@ src/autoharness/
 ├── cli.py
 ├── environments/
 │   ├── __init__.py
+│   ├── bandit.py
 │   ├── base.py
 │   ├── blackjack.py
 │   ├── frozen_lake.py

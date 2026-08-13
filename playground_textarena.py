@@ -13,31 +13,56 @@ from __future__ import annotations
 
 import argparse
 import sys
-from typing import Any
+from collections.abc import Callable
 
 from autoharness.environments.bandit import BanditAdapter
+from autoharness.environments.base import EnvironmentAdapter
 from autoharness.environments.blackjack import BlackjackAdapter
 from autoharness.environments.frozen_lake import FrozenLakeAdapter
 from autoharness.environments.tower_of_hanoi import TowerOfHanoiAdapter
 from autoharness.environments.twenty_forty_eight import TwentyFortyEightAdapter
 
-ENV_REGISTRY: dict[str, tuple[type, dict[str, Any]]] = {
+ENV_REGISTRY: dict[str, tuple[Callable[..., EnvironmentAdapter], dict[str, str]]] = {
     "blackjack": (BlackjackAdapter, {}),
     "tower_of_hanoi": (TowerOfHanoiAdapter, {"difficulty": "v0"}),
     "frozen_lake": (FrozenLakeAdapter, {}),
     "twenty_forty_eight": (TwentyFortyEightAdapter, {}),
-    "bandit": (BanditAdapter, {}),
+    "bandit": (BanditAdapter, {"env_id": "Bandit-v0"}),
+    "bandit_hard": (BanditAdapter, {"env_id": "Bandit-v0-hard"}),
 }
 
 
-def resolve_env(spec: str) -> Any:
+# Supported suffix aliases for the bandit base name.
+_BANDIT_SUFFIX_MAP: dict[str, str] = {
+    "hard": "bandit_hard",
+}
+
+
+def resolve_env(spec: str) -> EnvironmentAdapter:
     """Parse env spec like ``blackjack`` or ``tower_of_hanoi:medium`` and
-    return an instantiated adapter."""
+    return an instantiated adapter.
+
+    For the ``bandit`` base name the only accepted suffix is ``hard``
+    (e.g. ``bandit:hard``).  Any other suffix raises :exc:`ValueError`.
+    """
     if ":" in spec:
         name, difficulty = spec.split(":", 1)
     else:
         name = spec
         difficulty = None
+
+    # Handle bandit suffix variants explicitly before general registry lookup.
+    if name == "bandit" and difficulty is not None:
+        mapped = _BANDIT_SUFFIX_MAP.get(difficulty)
+        if mapped is None:
+            supported = ", ".join(sorted(_BANDIT_SUFFIX_MAP))
+            raise ValueError(
+                f"Unsupported bandit suffix {difficulty!r}. Supported: {supported}. "
+                f"Use 'bandit_hard' directly or 'bandit:hard'."
+            )
+        name = mapped
+        difficulty = None
+
     entry = ENV_REGISTRY.get(name)
     if entry is None:
         keys = ", ".join(sorted(ENV_REGISTRY))
@@ -49,7 +74,7 @@ def resolve_env(spec: str) -> Any:
     return cls(**kwargs)
 
 
-def play_loop(adapter: Any, seed: int | None) -> None:
+def play_loop(adapter: EnvironmentAdapter, seed: int | None) -> None:
     """Run an interactive play session for the given adapter."""
     print(f"\n{'=' * 60}")
     print(f"  {adapter.env_id}")

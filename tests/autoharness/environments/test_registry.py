@@ -48,7 +48,9 @@ def test_twenty_forty_eight_resolves_with_intrinsic_metadata() -> None:
 @pytest.mark.parametrize("env_id", ["Bandit-v0", "Bandit-v0-hard"])
 def test_bandit_resolves_with_intrinsic_metadata(env_id: str) -> None:
     spec = get_environment_spec(env_id)
-    assert isinstance(spec.create_adapter(), BanditAdapter)
+    adapter = spec.create_adapter()
+    assert isinstance(adapter, BanditAdapter)
+    assert adapter.env_id == env_id
     assert spec.optimal_steps == 0
     assert spec.family == "bandit"
 

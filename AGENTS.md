@@ -48,9 +48,11 @@ The main package is `autoharness`; the active implementation lives under
 │   │   ├── bandit.py                   # TextArena Bandit adapters
 │   │   ├── base.py                     # EnvironmentAdapter protocol
 │   │   ├── blackjack.py                # TextArena Blackjack adapter
+│   │   ├── frozen_lake.py              # TextArena FrozenLake adapter
 │   │   ├── models.py                   # normalized environment transition models
 │   │   ├── registry.py                 # EnvironmentSpec and lookup
-│   │   └── tower_of_hanoi.py           # TextArena Tower of Hanoi adapter
+│   │   ├── tower_of_hanoi.py           # TextArena Tower of Hanoi adapter
+│   │   └── twenty_forty_eight.py       # TextArena 2048 adapter
 │   └── harness_as_policy/
 │       ├── artifacts.py                # atomic artifact persistence
 │       ├── config.py                   # Settings and AUTOHARNESS_* env configuration
@@ -67,9 +69,11 @@ The main package is `autoharness`; the active implementation lives under
         │   ├── test_base.py
         │   ├── test_bandit.py
         │   ├── test_blackjack.py
+        │   ├── test_frozen_lake.py
         │   ├── test_models.py
         │   ├── test_registry.py
-        │   └── test_tower_of_hanoi.py
+        │   ├── test_tower_of_hanoi.py
+        │   └── test_twenty_forty_eight.py
         ├── test_cli.py
         └── harness_as_policy/
             ├── test_artifacts.py
@@ -138,7 +142,7 @@ Important settings:
 - `AUTOHARNESS_THOMPSON_SEED`: defaults to `42`
 - `AUTOHARNESS_EXECUTION_TIMEOUT`: defaults to `10`
 - `AUTOHARNESS_MAX_SOURCE_SIZE`: defaults to `32768`
-- `AUTOHARNESS_TRAINING_ROLLOUTS`: optional episode count; defaults to 5 for Bandit variants
+- `AUTOHARNESS_TRAINING_ROLLOUTS`: optional episode count; defaults to five for Blackjack-v0, Bandit-v0, and Bandit-v0-hard; falls back to one for all other environments
 - `AUTOHARNESS_LOG_LEVEL`: optional logging level
 - `AUTOHARNESS_INPUT_PRICE_PER_MILLION` and `AUTOHARNESS_OUTPUT_PRICE_PER_MILLION`: optional
   baseline cost inputs

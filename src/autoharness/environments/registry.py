@@ -6,6 +6,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from functools import partial
 
+from autoharness.environments.bandit import BanditAdapter
 from autoharness.environments.base import EnvironmentAdapter
 from autoharness.environments.blackjack import BlackjackAdapter
 from autoharness.environments.frozen_lake import FrozenLakeAdapter
@@ -51,6 +52,16 @@ ENVIRONMENTS["2048-v0"] = EnvironmentSpec(
     env_id="2048-v0",
     family="2048",
     create_adapter=TwentyFortyEightAdapter,
+)
+ENVIRONMENTS["Bandit-v0"] = EnvironmentSpec(
+    env_id="Bandit-v0",
+    family="bandit",
+    create_adapter=BanditAdapter,
+)
+ENVIRONMENTS["Bandit-v0-hard"] = EnvironmentSpec(
+    env_id="Bandit-v0-hard",
+    family="bandit",
+    create_adapter=partial(BanditAdapter, "Bandit-v0-hard"),
 )
 
 

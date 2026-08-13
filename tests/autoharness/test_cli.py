@@ -253,7 +253,15 @@ def test_synthesize_cmd_preserves_explicit_training_rollouts() -> None:
     assert mock_synthesize.call_args.kwargs["training_rollouts"] == 7
 
 
-@pytest.mark.parametrize(("env_id", "expected"), [("TowerOfHanoi-v0", 1), ("Blackjack-v0", 5)])
+@pytest.mark.parametrize(
+    ("env_id", "expected"),
+    [
+        ("TowerOfHanoi-v0", 1),
+        ("Blackjack-v0", 5),
+        ("Bandit-v0", 20),
+        ("Bandit-v0-hard", 20),
+    ],
+)
 def test_synthesize_cmd_uses_policy_training_rollout_default(env_id: str, expected: int) -> None:
     """Synthesis uses each environment's policy-owned default rollout count."""
     with (

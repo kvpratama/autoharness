@@ -39,11 +39,22 @@ _BANDIT_SUFFIX_MAP: dict[str, str] = {
 
 
 def resolve_env(spec: str) -> EnvironmentAdapter:
-    """Parse env spec like ``blackjack`` or ``tower_of_hanoi:medium`` and
-    return an instantiated adapter.
+    """Resolve an environment spec to an instantiated adapter.
 
-    For the ``bandit`` base name the only accepted suffix is ``hard``
-    (e.g. ``bandit:hard``).  Any other suffix raises :exc:`ValueError`.
+    Args:
+        spec: Environment selector such as ``blackjack`` or
+            ``tower_of_hanoi:medium``.
+
+    Returns:
+        The instantiated :class:`EnvironmentAdapter` for the requested
+        environment.
+
+    Raises:
+        ValueError: If ``spec`` uses an unsupported suffix for ``bandit``.
+
+    Note:
+        If the environment name is unknown, this function prints the available
+        environment names to stderr and exits the process with status code 1.
     """
     if ":" in spec:
         name, difficulty = spec.split(":", 1)
@@ -75,7 +86,17 @@ def resolve_env(spec: str) -> EnvironmentAdapter:
 
 
 def play_loop(adapter: EnvironmentAdapter, seed: int | None) -> None:
-    """Run an interactive play session for the given adapter."""
+    """Run an interactive play session for an environment adapter.
+
+    Args:
+        adapter: The environment adapter used to create, reset, and step
+            through the interactive session.
+        seed: Optional seed passed to ``adapter.reset()`` before play begins.
+
+    The session prints the rules and observations, prompts for actions until
+    the user exits, EOF or Ctrl-C is received, the maximum step count is
+    reached, or the environment terminates.
+    """
     print(f"\n{'=' * 60}")
     print(f"  {adapter.env_id}")
     print(f"{'=' * 60}")

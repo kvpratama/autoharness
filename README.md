@@ -1,9 +1,9 @@
 # AutoHarness
 
 AutoHarness experiments with harness-as-policy synthesis for game-playing agents. The current
-implementation targets TextArena Tower of Hanoi and Blackjack environments: an LLM refines a Python policy,
-AutoHarness executes that policy in a constrained subprocess, evaluates it against the environment,
-and keeps the best candidates as run artifacts.
+implementation targets TextArena Tower of Hanoi, Blackjack, FrozenLake, 2048, and Bandit environments: it asks an
+LLM to refine a Python policy, AutoHarness executes that policy in a constrained subprocess,
+evaluates it against the environment, and keeps the best candidates as run artifacts.
 
 The generated policy contract is:
 
@@ -66,6 +66,33 @@ uv run autoharness synthesize \
   --environment-seed 0
 ```
 
+For FrozenLake:
+
+```bash
+uv run autoharness synthesize \
+  --env FrozenLake-v0 \
+  --model <provider:model> \
+  --environment-seed 0
+```
+
+For 2048:
+
+```bash
+uv run autoharness synthesize \
+  --env 2048-v0 \
+  --model <provider:model> \
+  --environment-seed 0
+```
+
+For Bandit:
+
+```bash
+uv run autoharness synthesize \
+  --env Bandit-v0 \
+  --model <provider:model> \
+  --environment-seed 0
+```
+
 The command prints a run ID and writes artifacts under `artifacts/<run-id>/`.
 
 Useful options:
@@ -79,7 +106,8 @@ Useful options:
 - `--execution-timeout N`: set the per-action policy execution timeout in seconds
 - `--max-source-size N`: cap generated policy source size in bytes
 - `--environment-seed N`: base seed for shared candidate-assessment episodes
-- `--training-rollouts N`: episodes per candidate (defaults to one for Hanoi and five for Blackjack)
+- `--training-rollouts N`: episodes per candidate; defaults to five for Blackjack-v0, Bandit-v0,
+  and Bandit-v0-hard, and one (fallback) for TowerOfHanoi-v0, FrozenLake-v0, and 2048-v0
 
 Every candidate in a run uses the same resolved ordered training-seed list. `--seed` controls only
 Thompson sampling. Blackjack final evaluation uses the same persisted 20-episode held-out protocol
@@ -232,11 +260,14 @@ src/autoharness/
 ├── cli.py
 ├── environments/
 │   ├── __init__.py
+│   ├── bandit.py
 │   ├── base.py
 │   ├── blackjack.py
+│   ├── frozen_lake.py
 │   ├── models.py
 │   ├── registry.py
-│   └── tower_of_hanoi.py
+│   ├── tower_of_hanoi.py
+│   └── twenty_forty_eight.py
 └── harness_as_policy/
     ├── artifacts.py
     ├── config.py

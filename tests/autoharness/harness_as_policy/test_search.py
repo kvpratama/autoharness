@@ -981,8 +981,8 @@ def test_synthesize_reuses_shared_environment_seeds_for_every_candidate(tmp_path
 
 
 def test_synthesize_refines_only_action_after_checker_rejection() -> None:
-    """Checker rejection preserves the checker on the next refinement."""
-    adapter = FakeAdapter()
+    """Checker rejection preserves checker on next refinement when environment also rejects."""
+    adapter = FakeAdapter(reject_actions=True)
     refiner = FakeRefiner([REJECTED_BY_CHECKER_SOURCE, ACCEPTED_BY_CHECKER_SOURCE])
     with tempfile.TemporaryDirectory() as tmpdir:
         synthesize(
@@ -996,7 +996,23 @@ def test_synthesize_refines_only_action_after_checker_rejection() -> None:
     assert refiner.scopes == [True, False]
     assert "Policy legality check: false" in refiner.trajectories[1]
     assert "Policy legality checker rejected action" in refiner.trajectories[1]
-    assert adapter.step_calls == ["[X Y]"] * adapter.max_steps
+
+
+def test_synthesize_refines_both_when_checker_rejects_and_environment_accepts() -> None:
+    """Checker rejection when environment accepts action is recorded as disagreement."""
+    adapter = FakeAdapter(reject_actions=False)
+    refiner = FakeRefiner([REJECTED_BY_CHECKER_SOURCE, ACCEPTED_BY_CHECKER_SOURCE])
+    with tempfile.TemporaryDirectory() as tmpdir:
+        synthesize(
+            adapter=adapter,
+            profile=Profile.SMOKE,
+            refiner=refiner,
+            artifact_root=Path(tmpdir),
+            refinements=2,
+        )
+
+    assert refiner.scopes == [True, True]
+    assert "Legality disagreement: checker=False, environment=True" in refiner.trajectories[1]
 
 
 def test_synthesize_refines_both_after_legality_disagreement() -> None:
@@ -1016,6 +1032,24 @@ def test_synthesize_refines_both_after_legality_disagreement() -> None:
     assert "Policy legality check: true" in refiner.trajectories[1]
     assert "Environment legality check: false" in refiner.trajectories[1]
     assert "Legality disagreement" in refiner.trajectories[1]
+
+
+def test_synthesize_refines_only_action_after_step_limit() -> None:
+    """Step limit termination without legality disagreement preserves checker on next refinement."""
+    adapter = FakeAdapter()
+    adapter.max_steps = 1
+    refiner = FakeRefiner([ACCEPTED_BY_CHECKER_SOURCE, ACCEPTED_BY_CHECKER_SOURCE])
+    with tempfile.TemporaryDirectory() as tmpdir:
+        synthesize(
+            adapter=adapter,
+            profile=Profile.SMOKE,
+            refiner=refiner,
+            artifact_root=Path(tmpdir),
+            refinements=2,
+        )
+
+    assert refiner.scopes == [True, False]
+    assert "Rollout termination: step_limit" in refiner.trajectories[1]
 
 
 class SeedAwareAdapter(FakeAdapter):

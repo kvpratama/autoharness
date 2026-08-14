@@ -138,6 +138,8 @@ def test_effective_refinements_custom() -> None:
         ("TowerOfHanoi-v0-hard", 1),
         ("TowerOfHanoi-v0-hardcore", 1),
         ("Blackjack-v0", 5),
+        ("Bandit-v0", 5),
+        ("Bandit-v0-hard", 5),
     ],
 )
 def test_effective_training_rollouts_uses_policy_default(env_id: str, expected: int) -> None:

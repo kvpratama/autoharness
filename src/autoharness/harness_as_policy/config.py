@@ -10,7 +10,11 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 from autoharness.harness_as_policy.models import Profile
 
 _VALID_LOG_LEVELS: frozenset[str] = frozenset(logging.getLevelNamesMapping().keys())
-_TRAINING_ROLLOUT_DEFAULTS: dict[str, int] = {"Blackjack-v0": 5}
+_TRAINING_ROLLOUT_DEFAULTS: dict[str, int] = {
+    "Blackjack-v0": 5,
+    "Bandit-v0": 5,
+    "Bandit-v0-hard": 5,
+}
 
 
 def _validate_log_level_value(v: object) -> object:

@@ -25,7 +25,6 @@ from autoharness.harness_as_policy.models import (
     CandidateRankKey,
     Event,
     Profile,
-    TerminationReason,
 )
 from autoharness.harness_as_policy.refiner import RefinerProtocol
 from autoharness.harness_as_policy.rollout import RolloutEvaluator
@@ -417,9 +416,10 @@ def synthesize(
             parent_id,
             iteration,
         )
-        refine_legal_action = parent.termination_reason != TerminationReason.POLICY_REJECTED_ACTION
-        if parent.assessment is not None and should_refine_legal_action(parent.assessment):
-            refine_legal_action = True
+        is_root_parent = parent.parent_id is None or parent_id == ROOT_ID
+        refine_legal_action = is_root_parent or (
+            parent.assessment is not None and should_refine_legal_action(parent.assessment)
+        )
         try:
             refine_result = refiner.refine(
                 env_name=adapter.env_id,

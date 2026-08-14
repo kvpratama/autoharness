@@ -1,7 +1,8 @@
 ## Project Overview
 
 AutoHarness is a Python implementation of a harness-as-policy synthesis loop for game-playing
-agents. The current implementation targets TextArena environments (Tower of Hanoi, Blackjack): it asks an LLM
+agents. The current implementation targets TextArena environments (Tower of Hanoi, Blackjack, FrozenLake,
+2048, and Bandit): it asks an LLM
 to refine a Python policy module, executes the generated `propose_action(observation: str) -> str`
 function in an isolated subprocess, rolls the policy out against the environment, ranks candidates,
 and persists run artifacts for later evaluation.
@@ -44,11 +45,14 @@ The main package is `autoharness`; the active implementation lives under
 │   ├── cli.py                          # top-level CLI: synthesize, evaluate, evaluate-baseline
 │   ├── environments/
 │   │   ├── __init__.py                 # package marker
+│   │   ├── bandit.py                   # TextArena Bandit adapters
 │   │   ├── base.py                     # EnvironmentAdapter protocol
 │   │   ├── blackjack.py                # TextArena Blackjack adapter
+│   │   ├── frozen_lake.py              # TextArena FrozenLake adapter
 │   │   ├── models.py                   # normalized environment transition models
 │   │   ├── registry.py                 # EnvironmentSpec and lookup
-│   │   └── tower_of_hanoi.py           # TextArena Tower of Hanoi adapter
+│   │   ├── tower_of_hanoi.py           # TextArena Tower of Hanoi adapter
+│   │   └── twenty_forty_eight.py       # TextArena 2048 adapter
 │   └── harness_as_policy/
 │       ├── artifacts.py                # atomic artifact persistence
 │       ├── config.py                   # Settings and AUTOHARNESS_* env configuration
@@ -63,10 +67,13 @@ The main package is `autoharness`; the active implementation lives under
     └── autoharness/
         ├── environments/
         │   ├── test_base.py
+        │   ├── test_bandit.py
         │   ├── test_blackjack.py
+        │   ├── test_frozen_lake.py
         │   ├── test_models.py
         │   ├── test_registry.py
-        │   └── test_tower_of_hanoi.py
+        │   ├── test_tower_of_hanoi.py
+        │   └── test_twenty_forty_eight.py
         ├── test_cli.py
         └── harness_as_policy/
             ├── test_artifacts.py
@@ -135,6 +142,7 @@ Important settings:
 - `AUTOHARNESS_THOMPSON_SEED`: defaults to `42`
 - `AUTOHARNESS_EXECUTION_TIMEOUT`: defaults to `10`
 - `AUTOHARNESS_MAX_SOURCE_SIZE`: defaults to `32768`
+- `AUTOHARNESS_TRAINING_ROLLOUTS`: optional episode count; defaults to five for Blackjack-v0, Bandit-v0, and Bandit-v0-hard; falls back to one for all other environments
 - `AUTOHARNESS_LOG_LEVEL`: optional logging level
 - `AUTOHARNESS_INPUT_PRICE_PER_MILLION` and `AUTOHARNESS_OUTPUT_PRICE_PER_MILLION`: optional
   baseline cost inputs
